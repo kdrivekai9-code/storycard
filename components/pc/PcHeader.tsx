@@ -2,7 +2,7 @@ export function PcHeader() {
   return (
     <header className="pc-header">
       <span className="pc-logo">
-        CARD<em>STORY</em>
+        STORY<em>CARD</em>
       </span>
       <nav className="pc-nav">
         <a href="#sec-hero">INTRODUCE</a>
