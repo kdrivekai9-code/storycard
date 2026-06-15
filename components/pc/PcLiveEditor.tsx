@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import { useInvitationStore } from "@/store/invitationStore";
 import { DEFAULT_SECTIONS } from "@/lib/invitation/mergeConfig";
+import { searchKakaoPlaces, type KakaoPlace } from "@/lib/kakao/places";
 import type { Mood, MotionId, SectionId, ToneId, CoverType, UserData } from "@/lib/invitation/types";
 
 const MOOD_OPTIONS: { id: Mood; label: string; swatch: string }[] = [
@@ -57,6 +58,37 @@ const SECTION_OPTIONS: { id: SectionId; label: string }[] = [
 ];
 
 const MAX_PHOTOS = 10;
+
+function RingsIcon() {
+  return (
+    <svg className="group-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
+      <circle cx="9" cy="14" r="5" />
+      <circle cx="15" cy="14" r="5" />
+    </svg>
+  );
+}
+
+function CalendarIcon() {
+  return (
+    <svg className="group-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
+      <rect x="3" y="5" width="18" height="16" rx="2" />
+      <line x1="3" y1="10" x2="21" y2="10" />
+      <line x1="8" y1="2" x2="8" y2="6" />
+      <line x1="16" y1="2" x2="16" y2="6" />
+    </svg>
+  );
+}
+
+function FamilyIcon() {
+  return (
+    <svg className="group-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
+      <circle cx="8" cy="8" r="3" />
+      <circle cx="16" cy="8" r="3" />
+      <path d="M2 20c0-3 2.5-5 6-5s6 2 6 5" />
+      <path d="M11 20c0-2.5 2-4.5 5-4.5s5 2 5 4.5" />
+    </svg>
+  );
+}
 
 function CoverPreview({ id }: { id: CoverType }) {
   switch (id) {
@@ -130,6 +162,12 @@ export function PcLiveEditor() {
   const [gradientDot, setGradientDot] = useState<{ left: string; color: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [touched, setTouched] = useState<Set<keyof UserData>>(new Set());
+  const [venueResults, setVenueResults] = useState<KakaoPlace[]>([]);
+  const [venueSearching, setVenueSearching] = useState(false);
+  const [venueError, setVenueError] = useState<string | null>(null);
+  const [venueOpen, setVenueOpen] = useState(false);
+
   const activeMood = answers.mood ?? "modern";
   const activeCover = answers.cover ?? "full";
   const activeTone = answers.tone ?? "warm";
@@ -139,8 +177,38 @@ export function PcLiveEditor() {
 
   const field = (key: keyof UserData) => ({
     value: userData[key],
-    onChange: (e: React.ChangeEvent<HTMLInputElement>) => setUserData({ [key]: e.target.value }),
+    className: touched.has(key) ? undefined : "is-sample",
+    onChange: (e: React.ChangeEvent<HTMLInputElement>) => {
+      setUserData({ [key]: e.target.value });
+      setTouched((prev) => (prev.has(key) ? prev : new Set(prev).add(key)));
+    },
   });
+
+  const handleVenueSearch = async () => {
+    const query = userData.venue.trim();
+    if (!query) return;
+    setVenueSearching(true);
+    setVenueError(null);
+    try {
+      const results = await searchKakaoPlaces(query);
+      setVenueResults(results);
+      setVenueOpen(true);
+    } catch (err) {
+      setVenueError(err instanceof Error ? err.message : "검색 중 오류가 발생했습니다.");
+      setVenueOpen(true);
+    } finally {
+      setVenueSearching(false);
+    }
+  };
+
+  const handleSelectVenue = (place: KakaoPlace) => {
+    setUserData({
+      venue: place.place_name,
+      address: place.road_address_name || place.address_name,
+    });
+    setTouched((prev) => new Set(prev).add("venue").add("address"));
+    setVenueOpen(false);
+  };
 
   const toggleSection = (id: SectionId) => {
     const next = activeSections.includes(id)
@@ -187,7 +255,10 @@ export function PcLiveEditor() {
       <div className="live-card">
         {/* 신랑·신부 */}
         <div className="group">
-          <div className="group-label">신랑 · 신부</div>
+          <div className="group-label-fact">
+            <RingsIcon />
+            신랑 · 신부
+          </div>
           <div className="live-row">
             <div className="live-field">
               <label>신랑</label>
@@ -202,7 +273,10 @@ export function PcLiveEditor() {
 
         {/* 예식 일시 */}
         <div className="group">
-          <div className="group-label">예식 일시</div>
+          <div className="group-label-fact">
+            <CalendarIcon />
+            예식 일시
+          </div>
           <div className="live-row">
             <div className="live-field">
               <label>날짜</label>
@@ -217,11 +291,43 @@ export function PcLiveEditor() {
 
         {/* 예식장 */}
         <div className="group">
-          <div className="group-label">예식장</div>
           <div className="live-row single">
             <div className="live-field">
               <label>예식장 이름</label>
-              <input type="text" {...field("venue")} />
+              <div className="venue-search-row">
+                <input type="text" {...field("venue")} />
+                <button
+                  type="button"
+                  className="venue-search-btn"
+                  onClick={handleVenueSearch}
+                  disabled={venueSearching}
+                >
+                  {venueSearching ? "검색 중…" : "검색"}
+                </button>
+              </div>
+              {venueOpen && (
+                <div className="venue-results">
+                  {venueError ? (
+                    <div className="venue-error">{venueError}</div>
+                  ) : venueResults.length === 0 ? (
+                    <div className="venue-empty">검색 결과가 없습니다.</div>
+                  ) : (
+                    venueResults.map((place) => (
+                      <button
+                        key={`${place.place_name}-${place.address_name}`}
+                        type="button"
+                        className="venue-result-item"
+                        onClick={() => handleSelectVenue(place)}
+                      >
+                        {place.place_name}
+                        <span className="venue-result-addr">
+                          {place.road_address_name || place.address_name}
+                        </span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
             </div>
           </div>
           <div className="live-row single" style={{ marginTop: "12px" }}>
@@ -234,7 +340,10 @@ export function PcLiveEditor() {
 
         {/* 양가 혼주 */}
         <div className="group">
-          <div className="group-label">양가 혼주</div>
+          <div className="group-label-fact">
+            <FamilyIcon />
+            양가 혼주
+          </div>
           <div className="live-row">
             <div className="live-field">
               <label>신랑 부</label>
@@ -277,7 +386,7 @@ export function PcLiveEditor() {
 
         {/* Q3 표지 */}
         <div className="group">
-          <div className="group-label">Q3 · 표지 레이아웃 — 사진을 올리면 실제 미리보기로 확인됩니다</div>
+          <div className="group-label">Q2 · 표지 레이아웃 — 사진을 올리면 실제 미리보기로 확인됩니다</div>
           <div className="cover-card-grid">
             {COVER_OPTIONS.map((opt) => (
               <button
@@ -295,7 +404,7 @@ export function PcLiveEditor() {
 
         {/* Q4 표지 텍스트 컬러 */}
         <div className="group">
-          <div className="group-label">Q4 · 표지 텍스트 컬러</div>
+          <div className="group-label">Q3 · 표지 텍스트 컬러</div>
           <div className="ccp-wrap">
             {CTC_PRESETS.map((preset) => (
               <button
@@ -324,7 +433,7 @@ export function PcLiveEditor() {
 
         {/* Q7 말투 */}
         <div className="group">
-          <div className="group-label">Q7 · 인사말 말투</div>
+          <div className="group-label">Q4 · 인사말 말투</div>
           <div className="chips">
             {TONE_OPTIONS.map((opt) => (
               <button
@@ -341,7 +450,7 @@ export function PcLiveEditor() {
 
         {/* Q6 움직임 */}
         <div className="group">
-          <div className="group-label">Q6 · 움직임(연출)</div>
+          <div className="group-label">Q5 · 움직임(연출)</div>
           <div className="chips">
             {MOTION_OPTIONS.map((opt) => (
               <button
@@ -358,7 +467,7 @@ export function PcLiveEditor() {
 
         {/* Q5 담을 내용 */}
         <div className="group">
-          <div className="group-label">Q5 · 담을 내용 (복수 선택 — 끄면 청첩장에서 사라집니다)</div>
+          <div className="group-label">Q6 · 담을 내용 (복수 선택 — 끄면 청첩장에서 사라집니다)</div>
           <div className="chips">
             {SECTION_OPTIONS.map((opt) => (
               <button
@@ -375,7 +484,7 @@ export function PcLiveEditor() {
 
         {/* 사진 첨부 */}
         <div className="group">
-          <div className="group-label">사진 첨부</div>
+          <div className="group-label">Q7 · 사진 첨부</div>
           <div className="photo-upload-grid">
             {photos.map((src, idx) => (
               <div key={src} className={`photo-thumb${idx === 0 ? " is-cover" : ""}`}>

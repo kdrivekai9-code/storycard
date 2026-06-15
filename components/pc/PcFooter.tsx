@@ -14,6 +14,8 @@ export function PcFooter() {
         © 2026 CardStory · Crafted with care for your special day.
         <br />
         모바일 청첩장 · AI 영상 청첩장 · 부고장 (예정)
+        <br />
+        (주)씨엠엔피 390-86-01401 / 서울시 서초구 방배천로2길 10, 5층
       </div>
     </footer>
   );

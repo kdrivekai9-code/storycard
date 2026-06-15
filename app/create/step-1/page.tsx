@@ -131,7 +131,7 @@ const inputClass =
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
-    <div className="mt-7 mb-3 text-xs tracking-[0.2em] text-[var(--ink-faint)] uppercase">
+    <div className="mt-7 mb-3 text-sm font-medium tracking-[0.2em] text-[var(--ink-soft)] uppercase">
       {children}
     </div>
   );

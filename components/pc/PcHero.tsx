@@ -5,43 +5,38 @@ import { AiCameraIcon, GiftIcon, StopwatchIcon } from "./AdIcons";
 
 const AD_SLIDES = [
   {
-    color: "#e8208a",
-    bg: "#fff5f0",
+    color: "#f4a8c6",
+    bg: "#fff5f8",
     icon: GiftIcon,
     kw: "100% 완전 무료!",
-    kwColor: undefined,
+    kwColor: "#e0699f",
     sub: (
       <>
-        &quot;무료라고 하고 돈을 받는데
-        <br />
-        저희는 진짜 무료입니다.&quot;
+        “무료라고 하고 돈을 받는데 저희는 <strong style={{ color: "#e0699f" }}>진짜 무료</strong>입니다.”
       </>
     ),
   },
   {
-    color: "#20c08a",
+    color: "#8fe0bc",
     bg: "#f0fff8",
     icon: StopwatchIcon,
     kw: "딱 1분만 투자하세요",
-    kwColor: "#1a8a60",
+    kwColor: "#4fb98a",
     sub: (
       <>
-        &quot;불필요한 옵션 NO — 7개 질문으로
-        <br />
-        알아서 척척 만들어 드립니다.&quot;
+        “불필요한 옵션 NO — 7개 질문으로 <strong style={{ color: "#4fb98a" }}>알아서 척척</strong> 만들어 드립니다.”
       </>
     ),
   },
   {
-    color: "#9b59b6",
-    bg: "#f5f0ff",
+    color: "#c5a8ec",
+    bg: "#f8f4ff",
     icon: AiCameraIcon,
     kw: "스틸사진 방식은 이젠 안녕!",
-    kwColor: "#7b2da8",
+    kwColor: "#9b7cc9",
     sub: (
       <>
-        &quot;프리미엄 AI 생성형 모바일 카드로
-        <br />더 특별한 청첩장을 경험하세요.&quot;
+        “프리미엄 <strong style={{ color: "#9b7cc9" }}>AI 생성형 모바일 카드</strong>로 더 특별한 청첩장을 경험하세요.”
       </>
     ),
   },
@@ -61,7 +56,6 @@ export function PcHero() {
     <section className="pc-hero-full" id="sec-hero">
       <div className="pc-hero-inner">
         <div className="pc-hero-left">
-          <p className="eyebrow">FOR YOUR SPECIAL DAY · 모바일 청첩장</p>
           <h1>
             가장 닮은 <em style={{ display: "inline", fontStyle: "italic" }}>청첩장을 짓다.</em>
           </h1>
