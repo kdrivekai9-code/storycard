@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { createAdminBrowserClient } from "@/lib/supabase/admin-client";
 import { PasswordInput } from "./PasswordInput";
 
 export function AdminPasswordForm() {
@@ -24,7 +24,7 @@ export function AdminPasswordForm() {
     }
 
     setLoading(true);
-    const supabase = createClient();
+    const supabase = createAdminBrowserClient();
     const { error } = await supabase.auth.updateUser({ password });
     setLoading(false);
 

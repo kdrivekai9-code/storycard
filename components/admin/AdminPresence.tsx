@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { startAdminSession, pingAdminPresence, endAdminSession } from "@/app/admin/(dashboard)/account/actions";
+import { createAdminBrowserClient } from "@/lib/supabase/admin-client";
+import { startAdminSession, pingAdminPresence } from "@/app/admin/(dashboard)/account/actions";
 
-const HEARTBEAT_INTERVAL = 60_000; // 60초
+const HEARTBEAT_INTERVAL = 60_000;
 
 export function AdminPresence() {
   const logIdRef = useRef<string | null>(null);
@@ -21,10 +22,17 @@ export function AdminPresence() {
     });
 
     function handleUnload() {
-      if (logIdRef.current) {
-        // sendBeacon을 통해 비동기로 종료 기록
-        const body = JSON.stringify({ logId: logIdRef.current });
-        navigator.sendBeacon("/api/admin/session-end", body);
+      const body = JSON.stringify({ logId: logIdRef.current });
+
+      // 1) sendBeacon으로 서버 세션 만료 (가장 신뢰도 높음)
+      navigator.sendBeacon("/api/admin/session-end", body);
+
+      // 2) 클라이언트 sessionStorage 토큰도 즉시 제거
+      try {
+        const supabase = createAdminBrowserClient();
+        supabase.auth.signOut();
+      } catch {
+        // beforeunload 중 실패 무시
       }
     }
 
@@ -33,7 +41,6 @@ export function AdminPresence() {
     return () => {
       if (intervalId) clearInterval(intervalId);
       window.removeEventListener("beforeunload", handleUnload);
-      if (logIdRef.current) endAdminSession(logIdRef.current);
     };
   }, []);
 
