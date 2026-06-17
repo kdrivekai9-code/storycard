@@ -8,6 +8,7 @@ import { MapSection } from "./sections/MapSection";
 import { RsvpSection } from "./sections/RsvpSection";
 import { AccountSection } from "./sections/AccountSection";
 import { GuestbookSection } from "./sections/GuestbookSection";
+import { MotionController } from "./MotionController";
 
 export function InvitationRenderer({
   config,
@@ -18,11 +19,12 @@ export function InvitationRenderer({
   userData: UserData;
   bound: BoundInvitationData;
 }) {
-  const { theme, sections } = config;
+  const { theme, sections, motion } = config;
 
   return (
     <div
       data-mood={config.mood}
+      data-motion={motion}
       style={
         {
           "--bg": theme.bg,
@@ -35,9 +37,11 @@ export function InvitationRenderer({
           "--line-soft": theme.lineSoft,
           "--cover-bg": theme.coverBg,
           background: "var(--bg)",
+          position: "relative",
         } as React.CSSProperties
       }
     >
+      <MotionController motion={motion} />
       <CoverSection bound={bound} cover={config.cover} coverTextColor={config.coverTextColor} />
 
       {sections.includes("greeting") && <GreetingSection bound={bound} />}

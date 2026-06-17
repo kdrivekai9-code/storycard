@@ -23,8 +23,34 @@ export async function proxy(request: NextRequest) {
     },
   );
 
-  // refreshes the session cookie if needed
-  await supabase.auth.getUser();
+  const { data: { user } } = await supabase.auth.getUser();
+
+  // /admin/* 경로 보호 (로그인 페이지 제외)
+  if (
+    request.nextUrl.pathname.startsWith("/admin") &&
+    !request.nextUrl.pathname.startsWith("/admin/login")
+  ) {
+    if (!user) {
+      return NextResponse.redirect(new URL("/admin/login", request.url));
+    }
+  }
+
+  // 로그인된 사용자가 /my, /create 등 회원 전용 경로에 접근할 때
+  // admin 계정이면 스토리카드 메인 사이트 사용 불가 → /admin으로 보냄
+  const USER_ONLY_PATHS = ["/my", "/create"];
+  const isUserOnlyPath = USER_ONLY_PATHS.some((p) =>
+    request.nextUrl.pathname.startsWith(p),
+  );
+  if (user && isUserOnlyPath) {
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("role")
+      .eq("id", user.id)
+      .single();
+    if (profile?.role === "admin") {
+      return NextResponse.redirect(new URL("/admin", request.url));
+    }
+  }
 
   return supabaseResponse;
 }

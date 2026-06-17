@@ -1,8 +1,30 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useState, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { PcHeader } from "@/components/pc/PcHeader";
+import { PcFooter } from "@/components/pc/PcFooter";
+
+function BlockedAdminNotice() {
+  const sp = useSearchParams();
+  if (sp.get("blocked") !== "admin") return null;
+  return (
+    <p style={{
+      color: "var(--danger, #c0392b)",
+      fontSize: 13,
+      textAlign: "center",
+      marginBottom: 12,
+      padding: "10px 14px",
+      background: "#fef0f0",
+      borderRadius: 8,
+    }}>
+      관리자 계정은 스토리카드 로그인에 사용할 수 없습니다.<br />
+      관리자 페이지로 이동해 주세요.
+    </p>
+  );
+}
 
 type Provider = "naver" | "kakao";
 
@@ -39,76 +61,89 @@ export default function LoginPage() {
   }
 
   function handleNaverLogin() {
-    alert("네이버 로그인은 준비 중입니다.");
+    window.location.href = "/auth/naver";
   }
 
   return (
-    <main className="login-page">
-      <div className="login-card">
-        <Link href="/" className="login-logo">
-          STORY<em>CARD</em>
-        </Link>
-        <p className="login-subtitle">간편로그인으로 빠르게 시작하세요</p>
+    <>
+      <PcHeader />
+      <main className="login-page">
+        <div className="login-card">
+          <Link href="/" className="login-logo">
+            STORY<em>CARD</em>
+          </Link>
+          <p className="login-subtitle">간편로그인으로 빠르게 시작하세요</p>
+          <Suspense><BlockedAdminNotice /></Suspense>
 
-        <div className="login-tabs">
-          <button
-            type="button"
-            className={`login-tab naver${provider === "naver" ? " active naver" : ""}`}
-            onClick={() => setProvider("naver")}
-          >
-            네이버 간편로그인
-          </button>
-          <button
-            type="button"
-            className={`login-tab kakao${provider === "kakao" ? " active kakao" : ""}`}
-            onClick={() => setProvider("kakao")}
-          >
-            카카오 간편로그인
-          </button>
-        </div>
+          <div className="login-tabs">
+            <button
+              type="button"
+              className={`login-tab naver${provider === "naver" ? " active naver" : ""}`}
+              onClick={() => {
+                setProvider("naver");
+                handleNaverLogin();
+              }}
+            >
+              네이버 간편로그인
+            </button>
+            <button
+              type="button"
+              className={`login-tab kakao${provider === "kakao" ? " active kakao" : ""}`}
+              onClick={() => {
+                setProvider("kakao");
+                handleKakaoLogin();
+              }}
+            >
+              카카오 간편로그인
+            </button>
+          </div>
 
-        {provider === "naver" ? (
-          <div className="login-panel naver">
-            <div className="login-panel-icon naver">
-              <NaverIcon />
-            </div>
-            <p className="login-panel-title">네이버 아이디로 로그인</p>
-            <p className="login-panel-desc">
-              네이버 계정으로 간편하게 로그인하고
-              <br />
-              STORYCARD를 이용해보세요.
-            </p>
-            <button type="button" className="login-action-btn naver" onClick={handleNaverLogin}>
-              <span style={{ width: 18, height: 18, flexShrink: 0, display: "inline-flex" }}>
+          {provider === "naver" ? (
+            <div className="login-panel naver">
+              <div className="login-panel-icon naver">
                 <NaverIcon />
-              </span>
-              네이버로 로그인
-            </button>
-          </div>
-        ) : (
-          <div className="login-panel kakao">
-            <div className="login-panel-icon kakao">
-              <KakaoIcon />
+              </div>
+              <p className="login-panel-title">네이버 아이디로 로그인</p>
+              <p className="login-panel-desc">
+                네이버 계정으로 간편하게 로그인하고
+                <br />
+                STORYCARD를 이용해보세요.
+              </p>
+              <button type="button" className="login-action-btn naver" onClick={handleNaverLogin}>
+                <span style={{ width: 18, height: 18, flexShrink: 0, display: "inline-flex" }}>
+                  <NaverIcon />
+                </span>
+                네이버로 로그인
+              </button>
             </div>
-            <p className="login-panel-title">카카오 계정으로 로그인</p>
-            <p className="login-panel-desc">
-              카카오 계정으로 간편하게 로그인하고
-              <br />
-              STORYCARD를 이용해보세요.
-            </p>
-            <button type="button" className="login-action-btn kakao" onClick={handleKakaoLogin}>
-              <span style={{ width: 18, height: 18, flexShrink: 0, display: "inline-flex" }}>
+          ) : (
+            <div className="login-panel kakao">
+              <div className="login-panel-icon kakao">
                 <KakaoIcon />
-              </span>
-              카카오로 로그인
-            </button>
-          </div>
-        )}
+              </div>
+              <p className="login-panel-title">카카오 계정으로 로그인</p>
+              <p className="login-panel-desc">
+                카카오 계정으로 간편하게 로그인하고
+                <br />
+                STORYCARD를 이용해보세요.
+              </p>
+              <button type="button" className="login-action-btn kakao" onClick={handleKakaoLogin}>
+                <span style={{ width: 18, height: 18, flexShrink: 0, display: "inline-flex" }}>
+                  <KakaoIcon />
+                </span>
+                카카오로 로그인
+              </button>
+            </div>
+          )}
 
-        <Link href="/" className="login-back">
-          ← 홈으로 돌아가기
-        </Link>
+          <Link href="/" className="login-back">
+            ← 홈으로 돌아가기
+          </Link>
+        </div>
+      </main>
+      <div className="pc-main" style={{ paddingTop: 0 }}>
+        <PcFooter />
       </div>
-    </main>
+    </>
   );
 }

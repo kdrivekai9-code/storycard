@@ -1,7 +1,11 @@
 import Link from "next/link";
 import { PcMaster } from "@/components/pc/PcMaster";
+import { createClient } from "@/lib/supabase/server";
 
-export default function LandingPage() {
+export default async function LandingPage() {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+
   return (
     <>
     <div className="pc-master">
@@ -13,7 +17,15 @@ export default function LandingPage() {
           <span className="font-serif text-lg tracking-[0.3em]">
             BLOOM<em className="not-italic text-[var(--accent-deep)]">CARD</em>
           </span>
-          <span className="text-xs text-[var(--ink-soft)]">로그인</span>
+          {user ? (
+            <Link href="/my" className="text-xs text-[var(--ink-soft)]">
+              마이페이지
+            </Link>
+          ) : (
+            <Link href="/login" className="text-xs text-[var(--ink-soft)]">
+              로그인
+            </Link>
+          )}
         </header>
 
         <section className="px-6 pt-6 pb-8 text-center">

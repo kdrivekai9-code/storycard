@@ -1,11 +1,13 @@
+import Link from "next/link";
+
 export function PcFooter() {
   return (
     <footer className="pc-footer">
       <div className="top">
         <span className="copy">CARDSTORY</span>
         <div className="links">
-          <a>이용약관</a>
-          <a>개인정보</a>
+          <Link href="/terms">이용약관</Link>
+          <Link href="/privacy">개인정보</Link>
           <a>고객센터</a>
           <a>제휴문의</a>
         </div>

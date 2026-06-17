@@ -1,8 +1,12 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import type { User } from "@supabase/supabase-js";
+import { createClient } from "@/lib/supabase/client";
 import { useInvitationStore } from "@/store/invitationStore";
 import { DEFAULT_SECTIONS } from "@/lib/invitation/mergeConfig";
+import { saveInvitation, updateInvitation } from "@/lib/invitation/actions";
 import { searchKakaoPlaces, type KakaoPlace } from "@/lib/kakao/places";
 import type { Mood, MotionId, SectionId, ToneId, CoverType, UserData } from "@/lib/invitation/types";
 
@@ -20,7 +24,7 @@ const COVER_OPTIONS: { id: CoverType; label: string }[] = [
   { id: "frame", label: "액자형" },
   { id: "split", label: "상하분할" },
   { id: "mosaic", label: "모자이크" },
-  { id: "overlay", label: "중앙텍스트" },
+  { id: "overlay", label: "초대장" },
 ];
 
 const CTC_PRESETS = [
@@ -48,9 +52,7 @@ const MOTION_OPTIONS: { id: MotionId; label: string }[] = [
 
 const SECTION_OPTIONS: { id: SectionId; label: string }[] = [
   { id: "greeting", label: "인사말" },
-  { id: "timeline", label: "러브스토리" },
   { id: "gallery", label: "갤러리" },
-  { id: "video", label: "영상" },
   { id: "map", label: "오시는 길" },
   { id: "rsvp", label: "참석 의사" },
   { id: "account", label: "마음 전하실 곳" },
@@ -58,6 +60,25 @@ const SECTION_OPTIONS: { id: SectionId; label: string }[] = [
 ];
 
 const MAX_PHOTOS = 10;
+
+/** 신랑·신부 ~ 양가 혼주: 저장 시 필수로 입력해야 하는 항목 */
+const REQUIRED_FIELDS: { key: keyof UserData; label: string }[] = [
+  { key: "groom", label: "신랑" },
+  { key: "bride", label: "신부" },
+  { key: "dateInput", label: "날짜" },
+  { key: "timeInput", label: "시각" },
+  { key: "venue", label: "예식장 이름" },
+  { key: "address", label: "주소" },
+  { key: "groomFather", label: "신랑 부" },
+  { key: "groomMother", label: "신랑 모" },
+  { key: "brideFather", label: "신부 부" },
+  { key: "brideMother", label: "신부 모" },
+];
+
+/** "2026.10.18 (토)" 형식 */
+const DATE_RE = /^\d{4}[.\-\s]+\d{1,2}[.\-\s]+\d{1,2}\s*\([일월화수목금토]\)$/;
+/** "오후 1:30" 형식 */
+const TIME_RE = /^(오전|오후)\s*\d{1,2}:\d{2}$/;
 
 function RingsIcon() {
   return (
@@ -90,12 +111,18 @@ function FamilyIcon() {
   );
 }
 
-function CoverPreview({ id }: { id: CoverType }) {
+function CoverPreview({ id, photos }: { id: CoverType; photos: string[] }) {
+  const p1 = photos[0] ? `url('${photos[0]}')` : undefined;
+  const p2 = photos[1] ? `url('${photos[1]}')` : p1;
+  const p3 = photos[2] ? `url('${photos[2]}')` : p2;
+  const bg = (url?: string): React.CSSProperties =>
+    url ? { backgroundImage: url } : {};
+
   switch (id) {
     case "full":
       return (
         <div className="cc-preview cc-full">
-          <div className="cc-photo" />
+          <div className="cc-photo" style={bg(p1)} />
           <div className="cc-gradient" />
           <div className="cc-bottom-text">
             <div className="cc-bar w60" />
@@ -107,7 +134,7 @@ function CoverPreview({ id }: { id: CoverType }) {
       return (
         <div className="cc-preview cc-frame">
           <div className="cc-frame-outer">
-            <div className="cc-photo" />
+            <div className="cc-photo" style={bg(p1)} />
           </div>
           <div className="cc-bar w55" style={{ marginTop: "5px" }} />
           <div className="cc-bar w35" style={{ marginTop: "3px" }} />
@@ -116,7 +143,7 @@ function CoverPreview({ id }: { id: CoverType }) {
     case "split":
       return (
         <div className="cc-preview cc-split">
-          <div className="cc-photo" />
+          <div className="cc-photo" style={bg(p1)} />
           <div className="cc-split-fade" />
           <div className="cc-split-bottom">
             <div className="cc-bar w60" />
@@ -132,16 +159,16 @@ function CoverPreview({ id }: { id: CoverType }) {
             <div className="cc-bar w35" style={{ marginTop: "3px" }} />
           </div>
           <div className="cc-grid">
-            <div className="cc-photo cc-g-main" />
-            <div className="cc-photo cc-g-sm" />
-            <div className="cc-photo cc-g-sm" />
+            <div className="cc-photo cc-g-main" style={bg(p1)} />
+            <div className="cc-photo cc-g-sm" style={bg(p2)} />
+            <div className="cc-photo cc-g-sm" style={bg(p3)} />
           </div>
         </div>
       );
     case "overlay":
       return (
         <div className="cc-preview cc-overlay">
-          <div className="cc-photo" />
+          <div className="cc-photo" style={bg(p1)} />
           <div className="cc-dim" />
           <div className="cc-center-box">
             <div className="cc-bar w65" />
@@ -152,13 +179,19 @@ function CoverPreview({ id }: { id: CoverType }) {
   }
 }
 
-export function PcLiveEditor() {
+export function PcLiveEditor({
+  invitationId,
+  invitationSlug,
+}: {
+  invitationId?: string;
+  invitationSlug?: string;
+} = {}) {
   const userData = useInvitationStore((s) => s.userData);
   const answers = useInvitationStore((s) => s.answers);
+  const photos = useInvitationStore((s) => s.photos);
   const setUserData = useInvitationStore((s) => s.setUserData);
   const setAnswer = useInvitationStore((s) => s.setAnswer);
-
-  const [photos, setPhotos] = useState<string[]>([]);
+  const setPhotos = useInvitationStore((s) => s.setPhotos);
   const [gradientDot, setGradientDot] = useState<{ left: string; color: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -168,21 +201,77 @@ export function PcLiveEditor() {
   const [venueError, setVenueError] = useState<string | null>(null);
   const [venueOpen, setVenueOpen] = useState(false);
 
+  const [user, setUser] = useState<User | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [showLoginPopup, setShowLoginPopup] = useState(false);
+  const [invalidFields, setInvalidFields] = useState<Set<keyof UserData>>(new Set());
+  const [savedSlug, setSavedSlug] = useState<string | null>(invitationSlug ?? null);
+  const isEditMode = !!invitationId;
+
+  useEffect(() => {
+    const supabase = createClient();
+    supabase.auth.getUser().then(({ data }) => setUser(data.user));
+
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+    });
+    return () => listener.subscription.unsubscribe();
+  }, []);
+
   const activeMood = answers.mood ?? "modern";
   const activeCover = answers.cover ?? "full";
   const activeTone = answers.tone ?? "warm";
   const activeMotion = answers.motion ?? "soft";
   const activeSections = answers.sections ?? DEFAULT_SECTIONS;
-  const activeCtc = answers.coverTextColor ?? "#ffffff";
+  const LIGHT_BG_COVERS: CoverType[] = ["frame", "split", "overlay"];
+  const activeCtc = answers.coverTextColor ?? (LIGHT_BG_COVERS.includes(activeCover) ? "#333333" : "#ffffff");
 
   const field = (key: keyof UserData) => ({
     value: userData[key],
-    className: touched.has(key) ? undefined : "is-sample",
+    className: [touched.has(key) ? null : "is-sample", invalidFields.has(key) ? "is-invalid" : null]
+      .filter(Boolean)
+      .join(" ") || undefined,
     onChange: (e: React.ChangeEvent<HTMLInputElement>) => {
       setUserData({ [key]: e.target.value });
       setTouched((prev) => (prev.has(key) ? prev : new Set(prev).add(key)));
+      setInvalidFields((prev) => {
+        if (!prev.has(key)) return prev;
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
     },
   });
+
+  const validateRequiredFields = () => {
+    const invalid = new Set<keyof UserData>();
+    const missing: string[] = [];
+    const badFormat: string[] = [];
+
+    for (const { key, label } of REQUIRED_FIELDS) {
+      const value = (userData[key] ?? "").trim();
+      if (!touched.has(key) || !value) {
+        invalid.add(key);
+        missing.push(label);
+        continue;
+      }
+      if (key === "dateInput" && !DATE_RE.test(value)) {
+        invalid.add(key);
+        badFormat.push("날짜(예: 2026.10.18 (토))");
+      }
+      if (key === "timeInput" && !TIME_RE.test(value)) {
+        invalid.add(key);
+        badFormat.push("시각(예: 오후 1:30)");
+      }
+    }
+
+    const messages: string[] = [];
+    if (missing.length > 0) messages.push(`${missing.join(", ")} 항목을 입력해주세요.`);
+    if (badFormat.length > 0) messages.push(`${badFormat.join(", ")} 형식을 확인해주세요.`);
+
+    return { invalid, message: messages.join(" ") };
+  };
 
   const handleVenueSearch = async () => {
     const query = userData.venue.trim();
@@ -236,12 +325,50 @@ export function PcLiveEditor() {
     const files = Array.from(e.target.files ?? []);
     const remaining = MAX_PHOTOS - photos.length;
     const urls = files.slice(0, remaining).map((file) => URL.createObjectURL(file));
-    if (urls.length > 0) setPhotos((prev) => [...prev, ...urls]);
+    if (urls.length > 0) setPhotos([...photos, ...urls]);
     e.target.value = "";
   };
 
   const removePhoto = (idx: number) => {
-    setPhotos((prev) => prev.filter((_, i) => i !== idx));
+    setPhotos(photos.filter((_, i) => i !== idx));
+  };
+
+  const handleSave = async () => {
+    if (!user) {
+      setShowLoginPopup(true);
+      return;
+    }
+
+    const { invalid, message } = validateRequiredFields();
+    if (invalid.size > 0) {
+      setInvalidFields(invalid);
+      setSaveMsg({ type: "error", text: message });
+      return;
+    }
+    setInvalidFields(new Set());
+
+    setSaving(true);
+    setSaveMsg(null);
+
+    if (isEditMode && invitationId) {
+      const result = await updateInvitation(invitationId, userData, answers);
+      setSaving(false);
+      if (result.ok) {
+        setSaveMsg({ type: "success", text: "수정 내용이 저장되었습니다." });
+      } else {
+        setSaveMsg({ type: "error", text: "저장에 실패했습니다. 잠시 후 다시 시도해주세요." });
+      }
+      return;
+    }
+
+    const result = await saveInvitation(userData, answers);
+    setSaving(false);
+    if (result.ok) {
+      setSavedSlug(result.slug);
+      setSaveMsg({ type: "success", text: "저장되었습니다!" });
+    } else {
+      setSaveMsg({ type: "error", text: "저장에 실패했습니다. 잠시 후 다시 시도해주세요." });
+    }
   };
 
   return (
@@ -393,9 +520,13 @@ export function PcLiveEditor() {
                 key={opt.id}
                 type="button"
                 className={`cover-card${activeCover === opt.id ? " active" : ""}`}
-                onClick={() => setAnswer("cover", opt.id)}
+                onClick={() => {
+                  setAnswer("cover", opt.id);
+                  const defaultCtc = (["frame", "split", "overlay"] as CoverType[]).includes(opt.id as CoverType) ? "#333333" : "#ffffff";
+                  setAnswer("coverTextColor", defaultCtc);
+                }}
               >
-                <CoverPreview id={opt.id} />
+                <CoverPreview id={opt.id} photos={photos} />
                 <span className="cc-label">{opt.label}</span>
               </button>
             ))}
@@ -514,6 +645,32 @@ export function PcLiveEditor() {
           <div className="photo-count-hint">
             첫 번째 사진이 커버로 사용됩니다 · 최대 <span>{photos.length}</span>/{MAX_PHOTOS}장
           </div>
+        </div>
+
+        {/* 저장 */}
+        <div className="group">
+          <button type="button" className="live-save-btn" onClick={handleSave} disabled={saving}>
+            {saving ? "저장 중…" : isEditMode ? "수정 저장" : "저장하기"}
+          </button>
+          {saveMsg && <p className={`live-save-msg ${saveMsg.type}`}>{saveMsg.text}</p>}
+          {savedSlug && saveMsg?.type === "success" && (
+            <div className="live-save-url">
+              <a href={`/i/${savedSlug}`} target="_blank" rel="noreferrer" className="live-save-url-link">
+                /i/{savedSlug}
+              </a>
+              <a href="/my" className="live-save-my-link">MY청첩장 &rarr;</a>
+            </div>
+          )}
+          {showLoginPopup && (
+            <div className="login-popup-overlay" onClick={() => setShowLoginPopup(false)}>
+              <div className="login-popup" onClick={(e) => e.stopPropagation()}>
+                <p className="login-popup-text">로그인 후 저장할 수 있어요.</p>
+                <Link href="/login" className="login-popup-btn">
+                  로그인
+                </Link>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="live-hint">오른쪽 청첩장이 실시간으로 갱신됩니다.</div>
