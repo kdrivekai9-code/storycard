@@ -33,14 +33,14 @@ export default function PrivacyPage() {
               </thead>
               <tbody>
                 <tr>
-                  <td>소셜 로그인 (카카오·네이버)</td>
-                  <td>이메일, 닉네임/이름, 프로필 식별자</td>
+                  <td>필수 입력</td>
+                  <td>이름, 이메일, 휴대폰번호</td>
                   <td>회원 가입 및 로그인, 서비스 이용 식별</td>
                 </tr>
                 <tr>
                   <td>선택 입력</td>
-                  <td>휴대폰 번호</td>
-                  <td>서비스 공지, 계정 보호</td>
+                  <td>배송지</td>
+                  <td>상품 배송 서비스 제공</td>
                 </tr>
                 <tr>
                   <td>청첩장 제작</td>

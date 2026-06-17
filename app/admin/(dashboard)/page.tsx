@@ -6,6 +6,7 @@ import { CARD_TYPE_LABELS, TIER_LABELS } from "@/components/admin/AdminBadge";
 async function count(
   supabase: Awaited<ReturnType<typeof createClient>>,
   table: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   filter?: (q: any) => any,
 ) {
   let query = supabase.from(table).select("*", { count: "exact", head: true });
