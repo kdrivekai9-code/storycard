@@ -1,10 +1,10 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-function makeClient(request: NextRequest, storageKey?: string) {
-  let res = NextResponse.next({ request });
+function makeSupabaseClient(request: NextRequest, storageKey?: string) {
+  let supabaseResponse = NextResponse.next({ request });
 
-  const client = createServerClient(
+  const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
@@ -15,38 +15,39 @@ function makeClient(request: NextRequest, storageKey?: string) {
         },
         setAll(cookiesToSet) {
           cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
-          res = NextResponse.next({ request });
+          supabaseResponse = NextResponse.next({ request });
           cookiesToSet.forEach(({ name, value, options }) =>
-            res.cookies.set(name, value, options),
+            supabaseResponse.cookies.set(name, value, options),
           );
         },
       },
     },
   );
 
-  return { client, getRes: () => res };
+  return { supabase, getResponse: () => supabaseResponse };
 }
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
+
   const isAdminPath = pathname.startsWith("/admin");
   const isAdminLogin = pathname.startsWith("/admin/login");
 
   if (isAdminPath && !isAdminLogin) {
     // 어드민 경로: sb-admin 쿠키로 세션 확인
-    const { client, getRes } = makeClient(request, "sb-admin");
-    const { data: { user } } = await client.auth.getUser();
+    const { supabase, getResponse } = makeSupabaseClient(request, "sb-admin");
+    const { data: { user } } = await supabase.auth.getUser();
 
     if (!user) {
       return NextResponse.redirect(new URL("/admin/login", request.url));
     }
-    return getRes();
+    return getResponse();
   }
 
-  // 일반 경로: 기본 쿠키로 세션 갱신만
-  const { client, getRes } = makeClient(request);
-  await client.auth.getUser();
-  return getRes();
+  // 일반 경로: 기본 쿠키로 세션 갱신
+  const { supabase, getResponse } = makeSupabaseClient(request);
+  await supabase.auth.getUser();
+  return getResponse();
 }
 
 export const config = {
