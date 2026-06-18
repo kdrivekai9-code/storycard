@@ -34,12 +34,12 @@ export default function PrivacyPage() {
               <tbody>
                 <tr>
                   <td>필수 입력</td>
-                  <td>이름, 이메일, 휴대폰번호</td>
+                  <td>이름, 이메일, 휴대폰번호, 카카오계정(전화번호), 네이버계정</td>
                   <td>회원 가입 및 로그인, 서비스 이용 식별</td>
                 </tr>
                 <tr>
                   <td>선택 입력</td>
-                  <td>배송지</td>
+                  <td>배송지 정보 (수령인명, 배송지 주소, 전화번호)</td>
                   <td>상품 배송 서비스 제공</td>
                 </tr>
                 <tr>
