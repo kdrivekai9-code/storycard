@@ -1,4 +1,4 @@
-import { createClient } from "@/lib/supabase/server";
+import { createClient } from "@/lib/supabase/admin-server";
 
 export async function requireAdmin() {
   const supabase = await createClient();

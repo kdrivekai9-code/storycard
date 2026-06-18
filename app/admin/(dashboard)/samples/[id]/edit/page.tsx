@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { createClient } from "@/lib/supabase/server";
+import { createClient } from "@/lib/supabase/admin-server";
 import { AdminPageHeader } from "@/components/admin/AdminPageHeader";
 import { CARD_TYPE_LABELS, TIER_LABELS } from "@/components/admin/AdminBadge";
 import { updateSample } from "../../actions";

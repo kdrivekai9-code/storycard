@@ -1,4 +1,4 @@
-import { createClient } from "@/lib/supabase/server";
+import { createClient } from "@/lib/supabase/admin-server";
 import { AdminPageHeader } from "@/components/admin/AdminPageHeader";
 import { AdminPasswordForm } from "@/components/admin/AdminPasswordForm";
 import { AdminTable } from "@/components/admin/AdminTable";

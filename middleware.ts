@@ -1,44 +1,52 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-export async function middleware(request: NextRequest) {
-  let supabaseResponse = NextResponse.next({ request });
+function makeClient(request: NextRequest, storageKey?: string) {
+  let res = NextResponse.next({ request });
 
-  const supabase = createServerClient(
+  const client = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
+      ...(storageKey ? { auth: { storageKey } } : {}),
       cookies: {
         getAll() {
           return request.cookies.getAll();
         },
         setAll(cookiesToSet) {
           cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
-          supabaseResponse = NextResponse.next({ request });
+          res = NextResponse.next({ request });
           cookiesToSet.forEach(({ name, value, options }) =>
-            supabaseResponse.cookies.set(name, value, options),
+            res.cookies.set(name, value, options),
           );
         },
       },
     },
   );
 
-  // 세션 쿠키 갱신 (토큰 만료 시 자동 refresh)
-  const { data: { user } } = await supabase.auth.getUser();
+  return { client, getRes: () => res };
+}
 
-  // /admin/* 경로 — 비로그인 시 /admin/login으로
-  // 역할 체크는 app/admin/(dashboard)/layout.tsx에서 수행
-  if (
-    request.nextUrl.pathname.startsWith("/admin") &&
-    !request.nextUrl.pathname.startsWith("/admin/login")
-  ) {
+export async function middleware(request: NextRequest) {
+  const { pathname } = request.nextUrl;
+  const isAdminPath = pathname.startsWith("/admin");
+  const isAdminLogin = pathname.startsWith("/admin/login");
+
+  if (isAdminPath && !isAdminLogin) {
+    // 어드민 경로: sb-admin 쿠키로 세션 확인
+    const { client, getRes } = makeClient(request, "sb-admin");
+    const { data: { user } } = await client.auth.getUser();
+
     if (!user) {
-      const loginUrl = new URL("/admin/login", request.url);
-      return NextResponse.redirect(loginUrl);
+      return NextResponse.redirect(new URL("/admin/login", request.url));
     }
+    return getRes();
   }
 
-  return supabaseResponse;
+  // 일반 경로: 기본 쿠키로 세션 갱신만
+  const { client, getRes } = makeClient(request);
+  await client.auth.getUser();
+  return getRes();
 }
 
 export const config = {
