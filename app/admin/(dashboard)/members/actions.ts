@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { headers } from "next/headers";
 import { requireAdmin } from "@/lib/admin/requireAdmin";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -37,6 +38,7 @@ export async function updateMember(
     .eq("id", id);
 
   revalidatePath("/admin/members");
+  revalidatePath(`/admin/members/${id}`);
 }
 
 export async function deleteMember(id: string) {
@@ -47,4 +49,20 @@ export async function deleteMember(id: string) {
   if (error) throw new Error(error.message);
 
   revalidatePath("/admin/members");
+}
+
+/** 회원 비밀번호 초기화 — 등록된 이메일로 재설정 링크 전송 */
+export async function sendMemberPasswordReset(email: string) {
+  await requireAdmin();
+
+  const headersList = await headers();
+  const host = headersList.get("host");
+  const proto = headersList.get("x-forwarded-proto") ?? (host?.startsWith("localhost") ? "http" : "https");
+  const origin = `${proto}://${host}`;
+
+  const adminClient = createAdminClient();
+  const { error } = await adminClient.auth.resetPasswordForEmail(email, {
+    redirectTo: `${origin}/auth/reset-password`,
+  });
+  if (error) throw new Error(error.message);
 }

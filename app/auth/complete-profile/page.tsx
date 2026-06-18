@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { getMyProfile } from "@/lib/supabase/profile-actions";
 import { isPlaceholderEmail } from "@/lib/supabase/profile-utils";
+import { PcHeader } from "@/components/pc/PcHeader";
 import { CompleteProfileForm } from "./CompleteProfileForm";
 
 export default async function CompleteProfilePage({
@@ -19,7 +20,9 @@ export default async function CompleteProfilePage({
     profile.provider === "naver" ? "네이버" : "간편";
 
   return (
-    <main className="login-page">
+    <>
+      <PcHeader />
+      <main className="login-page">
       <div className="login-card" style={{ maxWidth: 420 }}>
         <p
           className="login-logo"
