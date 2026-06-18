@@ -11,12 +11,18 @@ export function CompleteProfileForm({
   defaultName,
   defaultEmail,
   defaultPhone,
+  defaultAddress,
+  defaultAddressDetail,
+  defaultReceiverName,
   provider,
 }: {
   nextPath: string;
   defaultName: string;
   defaultEmail: string;
   defaultPhone: string;
+  defaultAddress: string;
+  defaultAddressDetail: string;
+  defaultReceiverName: string;
   provider: string;
 }) {
   const [state, formAction, pending] = useActionState(completeProfile, INITIAL);
@@ -89,32 +95,52 @@ export function CompleteProfileForm({
       {/* ── 선택 정보 섹션 ── */}
       <div className="cp-section cp-section--optional">
         <div className="cp-section-header">
-          <span className="cp-section-label">선택 정보</span>
+          <span className="cp-section-label">배송지 정보</span>
           <span className="cp-section-optional-mark">입력하지 않아도 됩니다</span>
         </div>
 
         <div className="cp-field">
-          <label htmlFor="cp-address">배송지</label>
+          <label htmlFor="cp-receiver">받는 분 이름</label>
+          <input
+            id="cp-receiver"
+            name="receiver_name"
+            type="text"
+            placeholder="홍길동"
+            defaultValue={defaultReceiverName}
+            autoComplete="name"
+          />
+        </div>
+
+        <div className="cp-field">
+          <label htmlFor="cp-address">주소</label>
           <input
             id="cp-address"
             name="shipping_address"
             type="text"
-            placeholder="서울시 강남구 테헤란로 123, 101동 101호"
-            autoComplete="street-address"
+            placeholder="(우편번호) 기본주소"
+            defaultValue={defaultAddress}
+            autoComplete="address-line1"
           />
         </div>
 
+        <div className="cp-field">
+          <label htmlFor="cp-address-detail">상세주소</label>
+          <input
+            id="cp-address-detail"
+            name="shipping_detail"
+            type="text"
+            placeholder="동·호수, 층 등"
+            defaultValue={defaultAddressDetail}
+            autoComplete="address-line2"
+          />
+        </div>
       </div>
 
       {state && !state.ok && (
         <p className="admin-login-error">{state.message}</p>
       )}
 
-      <button
-        type="submit"
-        className="admin-btn"
-        disabled={pending}
-      >
+      <button type="submit" className="admin-btn" disabled={pending}>
         {pending ? "저장 중..." : "가입 완료"}
       </button>
     </form>

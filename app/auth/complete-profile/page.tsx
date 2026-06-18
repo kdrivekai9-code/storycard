@@ -44,6 +44,9 @@ export default async function CompleteProfilePage({
           defaultName={profile.nickname ?? ""}
           defaultEmail={isPlaceholderEmail(profile.authEmail) ? "" : (profile.authEmail ?? profile.email ?? "")}
           defaultPhone={profile.phone ?? ""}
+          defaultAddress={profile.shipping_address ?? ""}
+          defaultAddressDetail={profile.shipping_detail ?? ""}
+          defaultReceiverName={profile.receiver_name ?? ""}
           provider={profile.provider ?? ""}
         />
       </div>

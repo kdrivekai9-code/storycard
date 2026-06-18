@@ -18,7 +18,9 @@ export async function updateMember(
   nickname: string,
   phone: string,
   ci: string,
+  receiverName: string,
   shippingAddress: string,
+  shippingDetail: string,
 ) {
   const { supabase } = await requireAdmin();
 
@@ -28,7 +30,9 @@ export async function updateMember(
       nickname: nickname.trim() || null,
       phone: phone.trim() || null,
       ci: ci.trim() || null,
+      receiver_name: receiverName.trim() || null,
       shipping_address: shippingAddress.trim() || null,
+      shipping_detail: shippingDetail.trim() || null,
     })
     .eq("id", id);
 

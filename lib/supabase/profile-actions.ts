@@ -22,8 +22,10 @@ export async function completeProfile(
   const name    = (formData.get("name") as string | null)?.trim() || null;
   const phone   = (formData.get("phone") as string | null)?.trim() || null;
   const email   = (formData.get("email") as string | null)?.trim() || null;
-  const address = (formData.get("shipping_address") as string | null)?.trim() || null;
-  const ci      = (formData.get("ci") as string | null)?.trim() || null;
+  const address       = (formData.get("shipping_address") as string | null)?.trim() || null;
+  const addressDetail = (formData.get("shipping_detail") as string | null)?.trim() || null;
+  const receiverName  = (formData.get("receiver_name") as string | null)?.trim() || null;
+  const ci            = (formData.get("ci") as string | null)?.trim() || null;
   const next    = (formData.get("next") as string | null) || "/";
 
   // 필수 항목 검증
@@ -37,6 +39,8 @@ export async function completeProfile(
     phone,
     email,
     shipping_address: address,
+    shipping_detail: addressDetail,
+    receiver_name: receiverName,
     ci,
   };
 
@@ -63,7 +67,7 @@ export async function getMyProfile() {
 
   const { data } = await supabase
     .from("profiles")
-    .select("email, phone, nickname, provider, onboarding_done")
+    .select("email, phone, nickname, provider, onboarding_done, shipping_address, shipping_detail, receiver_name")
     .eq("id", user.id)
     .single();
 
