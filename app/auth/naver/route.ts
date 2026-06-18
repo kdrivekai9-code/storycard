@@ -11,6 +11,7 @@ export async function GET(request: Request) {
     client_id: process.env.NEXT_PUBLIC_NAVER_CLIENT_ID ?? "",
     redirect_uri: `${origin}/auth/naver/callback`,
     state,
+    scope: "name email mobile nickname profile_image",
   });
 
   const response = NextResponse.redirect(`https://nid.naver.com/oauth2.0/authorize?${params.toString()}`);

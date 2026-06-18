@@ -64,6 +64,7 @@ export async function GET(request: Request) {
           provider: "naver",
           naver_id: naverUser.id,
           full_name: naverUser.name,
+          phone: naverUser.mobile ?? null,
         },
       },
     });
@@ -80,9 +81,17 @@ export async function GET(request: Request) {
     const { data: { user: sessionUser } } = await supabase.auth.getUser();
     const { data: profile } = await supabase
       .from("profiles")
-      .select("onboarding_done, role")
+      .select("onboarding_done, role, phone")
       .eq("id", sessionUser?.id ?? "")
       .single();
+
+    // 네이버에서 받은 전화번호를 프로필에 저장 (아직 없는 경우)
+    if (sessionUser && naverUser.mobile && !profile?.phone) {
+      await supabase
+        .from("profiles")
+        .update({ phone: naverUser.mobile })
+        .eq("id", sessionUser.id);
+    }
 
     // 관리자 계정은 스토리카드 메인 로그인 불가 — 세션 해제 후 차단 안내
     if (profile?.role === "admin") {
