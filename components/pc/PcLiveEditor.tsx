@@ -6,9 +6,11 @@ import type { User } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
 import { useInvitationStore } from "@/store/invitationStore";
 import { DEFAULT_SECTIONS } from "@/lib/invitation/mergeConfig";
-import { saveInvitation, updateInvitation } from "@/lib/invitation/actions";
+import { saveInvitation, updateInvitation, syncInvitationPhotos } from "@/lib/invitation/actions";
+import { uploadInvitationPhotos, isVideoUrl } from "@/lib/invitation/photoUpload";
 import { searchKakaoPlaces, type KakaoPlace } from "@/lib/kakao/places";
 import type { Mood, MotionId, SectionId, ToneId, CoverType, UserData } from "@/lib/invitation/types";
+import { WeddingDatePicker, WeddingTimePicker } from "@/components/invitation/WeddingDateTimeFields";
 
 const MOOD_OPTIONS: { id: Mood; label: string; swatch: string }[] = [
   { id: "romantic", label: "로맨틱", swatch: "linear-gradient(135deg,#f5e0d4,#dcb4a5)" },
@@ -48,6 +50,7 @@ const MOTION_OPTIONS: { id: MotionId; label: string }[] = [
   { id: "snow", label: "눈송이" },
   { id: "autumn", label: "가을에서" },
   { id: "summer", label: "파도" },
+  { id: "lettering", label: "레터링" },
 ];
 
 const SECTION_OPTIONS: { id: SectionId; label: string }[] = [
@@ -112,17 +115,25 @@ function FamilyIcon() {
 }
 
 function CoverPreview({ id, photos }: { id: CoverType; photos: string[] }) {
-  const p1 = photos[0] ? `url('${photos[0]}')` : undefined;
-  const p2 = photos[1] ? `url('${photos[1]}')` : p1;
-  const p3 = photos[2] ? `url('${photos[2]}')` : p2;
-  const bg = (url?: string): React.CSSProperties =>
-    url ? { backgroundImage: url } : {};
+  const p1 = photos[0];
+  const p2 = photos[1] ?? p1;
+  const p3 = photos[2] ?? p2;
+  const bg = (src?: string): React.CSSProperties =>
+    src && !isVideoUrl(src) ? { backgroundImage: `url('${src}')` } : {};
+
+  // 사진 자리가 프리미엄 영상으로 교체된 경우 background-image로는 렌더링할 수 없어 <video>로 표시
+  const media = (className: string, src?: string) =>
+    src && isVideoUrl(src) ? (
+      <video className={className} src={src} style={{ objectFit: "cover" }} muted loop autoPlay playsInline />
+    ) : (
+      <div className={className} style={bg(src)} />
+    );
 
   switch (id) {
     case "full":
       return (
         <div className="cc-preview cc-full">
-          <div className="cc-photo" style={bg(p1)} />
+          {media("cc-photo", p1)}
           <div className="cc-gradient" />
           <div className="cc-bottom-text">
             <div className="cc-bar w60" />
@@ -134,7 +145,7 @@ function CoverPreview({ id, photos }: { id: CoverType; photos: string[] }) {
       return (
         <div className="cc-preview cc-frame">
           <div className="cc-frame-outer">
-            <div className="cc-photo" style={bg(p1)} />
+            {media("cc-photo", p1)}
           </div>
           <div className="cc-bar w55" style={{ marginTop: "5px" }} />
           <div className="cc-bar w35" style={{ marginTop: "3px" }} />
@@ -143,7 +154,7 @@ function CoverPreview({ id, photos }: { id: CoverType; photos: string[] }) {
     case "split":
       return (
         <div className="cc-preview cc-split">
-          <div className="cc-photo" style={bg(p1)} />
+          {media("cc-photo", p1)}
           <div className="cc-split-fade" />
           <div className="cc-split-bottom">
             <div className="cc-bar w60" />
@@ -159,16 +170,16 @@ function CoverPreview({ id, photos }: { id: CoverType; photos: string[] }) {
             <div className="cc-bar w35" style={{ marginTop: "3px" }} />
           </div>
           <div className="cc-grid">
-            <div className="cc-photo cc-g-main" style={bg(p1)} />
-            <div className="cc-photo cc-g-sm" style={bg(p2)} />
-            <div className="cc-photo cc-g-sm" style={bg(p3)} />
+            {media("cc-photo cc-g-main", p1)}
+            {media("cc-photo cc-g-sm", p2)}
+            {media("cc-photo cc-g-sm", p3)}
           </div>
         </div>
       );
     case "overlay":
       return (
         <div className="cc-preview cc-overlay">
-          <div className="cc-photo" style={bg(p1)} />
+          {media("cc-photo", p1)}
           <div className="cc-dim" />
           <div className="cc-center-box">
             <div className="cc-bar w65" />
@@ -192,10 +203,16 @@ export function PcLiveEditor({
   const setUserData = useInvitationStore((s) => s.setUserData);
   const setAnswer = useInvitationStore((s) => s.setAnswer);
   const setPhotos = useInvitationStore((s) => s.setPhotos);
+  const setSaved = useInvitationStore((s) => s.setSaved);
   const [gradientDot, setGradientDot] = useState<{ left: string; color: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [touched, setTouched] = useState<Set<keyof UserData>>(new Set());
+  // 수정모드: 기존에 저장된 값이므로 "샘플 placeholder 미입력" 검증을 건너뛰도록
+  // 필수 항목을 모두 touched 처리 (수정페이지가 store에 직접 setUserData 하기 때문에
+  // 이 컴포넌트의 touched state는 알지 못함)
+  const [touched, setTouched] = useState<Set<keyof UserData>>(() =>
+    invitationId ? new Set(REQUIRED_FIELDS.map((f) => f.key)) : new Set(),
+  );
   const [venueResults, setVenueResults] = useState<KakaoPlace[]>([]);
   const [venueSearching, setVenueSearching] = useState(false);
   const [venueError, setVenueError] = useState<string | null>(null);
@@ -208,6 +225,13 @@ export function PcLiveEditor({
   const [invalidFields, setInvalidFields] = useState<Set<keyof UserData>>(new Set());
   const [savedSlug, setSavedSlug] = useState<string | null>(invitationSlug ?? null);
   const isEditMode = !!invitationId;
+
+  // 수정모드 진입 시 store에 저장 상태를 동기화 (PcPremium 등 다른 컴포넌트가 참조)
+  useEffect(() => {
+    if (invitationId) {
+      setSaved(invitationId, invitationSlug ?? "");
+    }
+  }, [invitationId, invitationSlug, setSaved]);
 
   useEffect(() => {
     const supabase = createClient();
@@ -224,24 +248,26 @@ export function PcLiveEditor({
   const activeTone = answers.tone ?? "warm";
   const activeMotion = answers.motion ?? "soft";
   const activeSections = answers.sections ?? DEFAULT_SECTIONS;
-  const LIGHT_BG_COVERS: CoverType[] = ["frame", "split", "overlay"];
+  const LIGHT_BG_COVERS: CoverType[] = ["frame", "split", "overlay", "full", "mosaic"];
   const activeCtc = answers.coverTextColor ?? (LIGHT_BG_COVERS.includes(activeCover) ? "#333333" : "#ffffff");
+
+  const setField = (key: keyof UserData, value: string) => {
+    setUserData({ [key]: value });
+    setTouched((prev) => (prev.has(key) ? prev : new Set(prev).add(key)));
+    setInvalidFields((prev) => {
+      if (!prev.has(key)) return prev;
+      const next = new Set(prev);
+      next.delete(key);
+      return next;
+    });
+  };
 
   const field = (key: keyof UserData) => ({
     value: userData[key],
     className: [touched.has(key) ? null : "is-sample", invalidFields.has(key) ? "is-invalid" : null]
       .filter(Boolean)
       .join(" ") || undefined,
-    onChange: (e: React.ChangeEvent<HTMLInputElement>) => {
-      setUserData({ [key]: e.target.value });
-      setTouched((prev) => (prev.has(key) ? prev : new Set(prev).add(key)));
-      setInvalidFields((prev) => {
-        if (!prev.has(key)) return prev;
-        const next = new Set(prev);
-        next.delete(key);
-        return next;
-      });
-    },
+    onChange: (e: React.ChangeEvent<HTMLInputElement>) => setField(key, e.target.value),
   });
 
   const validateRequiredFields = () => {
@@ -352,23 +378,37 @@ export function PcLiveEditor({
 
     if (isEditMode && invitationId) {
       const result = await updateInvitation(invitationId, userData, answers);
-      setSaving(false);
-      if (result.ok) {
-        setSaveMsg({ type: "success", text: "수정 내용이 저장되었습니다." });
-      } else {
+      if (!result.ok) {
+        setSaving(false);
         setSaveMsg({ type: "error", text: "저장에 실패했습니다. 잠시 후 다시 시도해주세요." });
+        return;
       }
+      try {
+        const paths = await uploadInvitationPhotos(invitationId, user.id, photos);
+        await syncInvitationPhotos(invitationId, paths);
+      } catch {
+        // 사진 업로드 실패해도 본문 저장은 유지
+      }
+      setSaving(false);
+      setSaveMsg({ type: "success", text: "수정 내용이 저장되었습니다." });
       return;
     }
 
     const result = await saveInvitation(userData, answers);
-    setSaving(false);
     if (result.ok) {
+      try {
+        const paths = await uploadInvitationPhotos(result.id, user.id, photos);
+        await syncInvitationPhotos(result.id, paths);
+      } catch {
+        // 사진 업로드 실패해도 본문 저장은 유지
+      }
       setSavedSlug(result.slug);
+      setSaved(result.id, result.slug);
       setSaveMsg({ type: "success", text: "저장되었습니다!" });
     } else {
       setSaveMsg({ type: "error", text: "저장에 실패했습니다. 잠시 후 다시 시도해주세요." });
     }
+    setSaving(false);
   };
 
   return (
@@ -407,11 +447,21 @@ export function PcLiveEditor({
           <div className="live-row">
             <div className="live-field">
               <label>날짜</label>
-              <input type="text" {...field("dateInput")} />
+              <WeddingDatePicker
+                value={userData.dateInput}
+                onChange={(v) => setField("dateInput", v)}
+                sample={!touched.has("dateInput")}
+                invalid={invalidFields.has("dateInput")}
+              />
             </div>
             <div className="live-field">
               <label>시각</label>
-              <input type="text" {...field("timeInput")} />
+              <WeddingTimePicker
+                value={userData.timeInput}
+                onChange={(v) => setField("timeInput", v)}
+                sample={!touched.has("timeInput")}
+                invalid={invalidFields.has("timeInput")}
+              />
             </div>
           </div>
         </div>
@@ -522,7 +572,7 @@ export function PcLiveEditor({
                 className={`cover-card${activeCover === opt.id ? " active" : ""}`}
                 onClick={() => {
                   setAnswer("cover", opt.id);
-                  const defaultCtc = (["frame", "split", "overlay"] as CoverType[]).includes(opt.id as CoverType) ? "#333333" : "#ffffff";
+                  const defaultCtc = (["frame", "split", "overlay", "full", "mosaic"] as CoverType[]).includes(opt.id as CoverType) ? "#333333" : "#ffffff";
                   setAnswer("coverTextColor", defaultCtc);
                 }}
               >
@@ -593,6 +643,16 @@ export function PcLiveEditor({
                 {opt.label}
               </button>
             ))}
+            {activeMotion === "lettering" && (
+              <input
+                type="text"
+                className="lettering-input"
+                value={answers.letteringText ?? "Our wedding day"}
+                onChange={(e) => setAnswer("letteringText", e.target.value)}
+                placeholder="Our wedding day"
+                maxLength={40}
+              />
+            )}
           </div>
         </div>
 
@@ -619,8 +679,12 @@ export function PcLiveEditor({
           <div className="photo-upload-grid">
             {photos.map((src, idx) => (
               <div key={src} className={`photo-thumb${idx === 0 ? " is-cover" : ""}`}>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={src} alt={`첨부 사진 ${idx + 1}`} />
+                {isVideoUrl(src) ? (
+                  <video src={src} muted playsInline />
+                ) : (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={src} alt={`첨부 사진 ${idx + 1}`} />
+                )}
                 <button type="button" className="remove-btn" onClick={() => removePhoto(idx)} aria-label="사진 삭제">
                   ×
                 </button>

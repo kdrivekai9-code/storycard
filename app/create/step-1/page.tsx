@@ -3,9 +3,10 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useForm } from "react-hook-form";
+import { Controller, useForm } from "react-hook-form";
 import { z } from "zod";
 import { useInvitationStore } from "@/store/invitationStore";
+import { WeddingDatePicker, WeddingTimePicker } from "@/components/invitation/WeddingDateTimeFields";
 
 const schema = z.object({
   groom: z.string().min(1, "신랑의 이름을 입력해주세요."),
@@ -29,6 +30,7 @@ export default function Step1Page() {
 
   const {
     register,
+    control,
     handleSubmit,
     formState: { errors },
   } = useForm<FormValues>({
@@ -77,10 +79,22 @@ export default function Step1Page() {
           <SectionTitle>예식 일시</SectionTitle>
           <FieldRow>
             <Field label="날짜" error={errors.dateInput?.message}>
-              <input {...register("dateInput")} type="text" className={inputClass} />
+              <Controller
+                name="dateInput"
+                control={control}
+                render={({ field: f }) => (
+                  <WeddingDatePicker value={f.value} onChange={f.onChange} />
+                )}
+              />
             </Field>
             <Field label="시각" error={errors.timeInput?.message}>
-              <input {...register("timeInput")} type="text" className={inputClass} />
+              <Controller
+                name="timeInput"
+                control={control}
+                render={({ field: f }) => (
+                  <WeddingTimePicker value={f.value} onChange={f.onChange} />
+                )}
+              />
             </Field>
           </FieldRow>
 

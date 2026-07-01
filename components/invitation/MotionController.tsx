@@ -2,7 +2,13 @@
 import { useEffect, useRef } from "react";
 import type { MotionId } from "@/lib/invitation/types";
 
-export function MotionController({ motion }: { motion: MotionId }) {
+export function MotionController({
+  motion,
+  letteringText,
+}: {
+  motion: MotionId;
+  letteringText?: string;
+}) {
   const anchorRef = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
@@ -13,12 +19,18 @@ export function MotionController({ motion }: { motion: MotionId }) {
 
     let animId: number | null = null;
     let burstInterval: ReturnType<typeof setInterval> | null = null;
+    let letteringTimer: ReturnType<typeof setTimeout> | null = null;
     let obs: IntersectionObserver | null = null;
 
     const stopCanvas = () => {
       if (animId !== null) { cancelAnimationFrame(animId); animId = null; }
       if (burstInterval !== null) { clearInterval(burstInterval); burstInterval = null; }
       container.querySelector("#petalCanvas")?.remove();
+    };
+
+    const stopLettering = () => {
+      if (letteringTimer !== null) { clearTimeout(letteringTimer); letteringTimer = null; }
+      container.querySelector("#letteringOverlay")?.remove();
     };
 
     const mkCanvas = (): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D; W: number; H: number } | null => {
@@ -36,6 +48,7 @@ export function MotionController({ motion }: { motion: MotionId }) {
 
     // ── Reset ────────────────────────────────────────────────────
     stopCanvas();
+    stopLettering();
     container.querySelectorAll<HTMLElement>(".motion-in").forEach(el => {
       el.classList.remove("motion-in");
       el.style.transitionDelay = "";
@@ -49,7 +62,7 @@ export function MotionController({ motion }: { motion: MotionId }) {
       const r = mkCanvas();
       if (r) {
         const { ctx, W, H } = r;
-        const petals = Array.from({ length: 22 }, () => ({
+        const petals = Array.from({ length: 12 }, () => ({
           x: Math.random() * W, y: Math.random() * H * 1.5 - H * 0.5,
           rx: Math.random() * 10 + 6, ry: Math.random() * 5.5 + 3.5,
           rot: Math.random() * Math.PI * 2, drot: (Math.random() - 0.5) * 0.025,
@@ -93,29 +106,29 @@ export function MotionController({ motion }: { motion: MotionId }) {
         };
 
         const spawnFloater = () => {
-          const angle = Math.random() * Math.PI * 2, spd = Math.random() * 2.5 + 2.0;
-          floaters.push({ x: Math.random() * W, y: Math.random() * H, vx: Math.cos(angle) * spd, vy: Math.sin(angle) * spd, size: Math.random() * 3 + 4, hue: HUES[Math.floor(Math.random() * HUES.length)], phase: Math.random() * Math.PI * 2, age: 0, trail: [] });
+          const angle = Math.random() * Math.PI * 2, spd = Math.random() * 1.0 + 0.6;
+          floaters.push({ x: Math.random() * W, y: Math.random() * H, vx: Math.cos(angle) * spd, vy: Math.sin(angle) * spd, size: Math.random() * 1 + 1.5, hue: HUES[Math.floor(Math.random() * HUES.length)], phase: Math.random() * Math.PI * 2, age: 0, trail: [] });
         };
 
         const explode = (x: number, y: number) => {
           const hue = HUES[Math.floor(Math.random() * HUES.length)];
           bursts.push({ x, y, vx: 0, vy: 0, size: 52, life: 1, decay: 0.055, hue, glow: true });
           bursts.push({ x, y, vx: 0, vy: 0, size: 30, life: 1, decay: 0.07, hue: (hue + 40) % 360, glow: true });
-          for (let i = 0; i < 16; i++) {
-            const a = (i / 16) * Math.PI * 2, spd = Math.random() * 4.5 + 2;
-            bursts.push({ x, y, vx: Math.cos(a) * spd, vy: Math.sin(a) * spd - Math.random() * 1.5, size: Math.random() * 5 + 3.5, life: 1, decay: Math.random() * 0.022 + 0.016, hue: hue + Math.random() * 40 - 20, star: true });
+          for (let i = 0; i < 3; i++) {
+            const a = (i / 3) * Math.PI * 2, spd = Math.random() * 1.8 + 1;
+            bursts.push({ x, y, vx: Math.cos(a) * spd, vy: Math.sin(a) * spd - Math.random() * 0.8, size: Math.random() * 1.2 + 1.2, life: 1, decay: Math.random() * 0.022 + 0.016, hue: hue + Math.random() * 40 - 20, star: true });
           }
           for (let i = 0; i < 12; i++) {
-            const a = Math.random() * Math.PI * 2, spd = Math.random() * 6 + 3;
-            bursts.push({ x, y, vx: Math.cos(a) * spd, vy: Math.sin(a) * spd - 1, size: Math.random() * 3 + 1.5, life: 1, decay: Math.random() * 0.03 + 0.02, hue: hue + Math.random() * 60 - 30, star: false });
+            const a = Math.random() * Math.PI * 2, spd = Math.random() * 2.5 + 1.3;
+            bursts.push({ x, y, vx: Math.cos(a) * spd, vy: Math.sin(a) * spd - 0.5, size: Math.random() * 3 + 1.5, life: 1, decay: Math.random() * 0.03 + 0.02, hue: hue + Math.random() * 60 - 30, star: false });
           }
         };
 
-        for (let i = 0; i < 8; i++) spawnFloater();
+        for (let i = 0; i < 5; i++) spawnFloater();
         burstInterval = setInterval(() => {
           if (!document.getElementById("petalCanvas")) { clearInterval(burstInterval!); return; }
           explode(Math.random() * W * 0.75 + W * 0.12, Math.random() * H * 0.7 + H * 0.08);
-          if (floaters.length < 10) spawnFloater();
+          if (floaters.length < 6) spawnFloater();
         }, 1000);
         setTimeout(() => explode(W / 2, H * 0.35), 300);
 
@@ -152,10 +165,10 @@ export function MotionController({ motion }: { motion: MotionId }) {
               ctx.restore();
             } catch { /* ignore */ }
             f.x += f.vx; f.y += f.vy; f.age++;
-            f.vx += Math.sin(f.age * 0.05 + f.phase) * 0.04; f.vy += Math.cos(f.age * 0.04 + f.phase) * 0.04;
+            f.vx += Math.sin(f.age * 0.05 + f.phase) * 0.02; f.vy += Math.cos(f.age * 0.04 + f.phase) * 0.02;
             const spd = Math.hypot(f.vx, f.vy) || 0.001;
-            if (spd > 4.5) { f.vx = f.vx / spd * 4.5; f.vy = f.vy / spd * 4.5; }
-            else if (spd < 1.5) { f.vx = f.vx / spd * 1.5; f.vy = f.vy / spd * 1.5; }
+            if (spd > 2.0) { f.vx = f.vx / spd * 2.0; f.vy = f.vy / spd * 2.0; }
+            else if (spd < 0.6) { f.vx = f.vx / spd * 0.6; f.vy = f.vy / spd * 0.6; }
             if (f.x < 8 || f.x > W - 8) f.vx *= -1;
             if (f.y < 8 || f.y > H - 8) f.vy *= -1;
           });
@@ -194,17 +207,10 @@ export function MotionController({ motion }: { motion: MotionId }) {
           ctx.bezierCurveTo(cx + rad * 2, cy - rad * 1.2, cx + rad * 2, cy + rad * 0.3, cx, cy + rad * 0.6);
           ctx.closePath();
         };
-        const beatScale = (age: number) => {
-          const t = (age % 48) / 48;
-          if (t < 0.08) return 1 + 0.35 * Math.sin((t / 0.08) * Math.PI);
-          if (t < 0.18) return 1;
-          if (t < 0.26) return 1 + 0.2 * Math.sin(((t - 0.18) / 0.08) * Math.PI);
-          return 1;
-        };
-        const hearts = Array.from({ length: 8 }, (_, i) => ({
-          x: Math.random() * W, y: i < 5 ? Math.random() * H : H + 15 + Math.random() * 60,
+        const hearts = Array.from({ length: 5 }, (_, i) => ({
+          x: Math.random() * W, y: i < 3 ? Math.random() * H : H + 15 + Math.random() * 60,
           vy: -(Math.random() * 0.5 + 0.3), vx: (Math.random() - 0.5) * 0.3,
-          r: Math.random() > 0.45 ? Math.random() * 8 + 12 : Math.random() * 4 + 5,
+          r: Math.random() > 0.45 ? Math.random() * 5 + 9 : Math.random() * 4 + 5,
           hue: Math.random() * 20 + 335, sat: 80 + Math.random() * 15, lit: 65 + Math.random() * 15,
           alpha: 0.55 + Math.random() * 0.35, age: Math.floor(Math.random() * 48),
           phase: Math.random() * Math.PI * 2, stringLen: Math.random() * 24 + 28,
@@ -212,7 +218,7 @@ export function MotionController({ motion }: { motion: MotionId }) {
         const tick = () => {
           ctx.clearRect(0, 0, W, H);
           hearts.forEach(h => {
-            const bs = beatScale(h.age), rad = h.r * bs;
+            const rad = h.r;
             const sway = Math.sin(h.age * 0.04 + h.phase) * rad * 0.4;
             ctx.save();
             ctx.globalAlpha = h.alpha * 0.5;
@@ -410,6 +416,56 @@ export function MotionController({ motion }: { motion: MotionId }) {
       }
     }
 
+    if (motion === "lettering") {
+      const cover = container.querySelector<HTMLElement>(".inv-cover");
+      if (cover) {
+        const text = (letteringText && letteringText.trim()) || "Our wedding day";
+        const el = document.createElement("div");
+        el.id = "letteringOverlay";
+        Object.assign(el.style, {
+          position: "absolute",
+          top: "50px",
+          left: "0",
+          right: "0",
+          textAlign: "center",
+          zIndex: "6",
+          pointerEvents: "none",
+          fontFamily: "var(--font-cormorant), serif",
+          fontWeight: "500",
+          fontSize: "16px",
+          letterSpacing: "0.22em",
+          color: "var(--ctc, #fff)",
+          textShadow: "0 1px 6px rgba(0,0,0,0.25)",
+        });
+        cover.appendChild(el);
+
+        const spans = [...text].map((ch) => {
+          const span = document.createElement("span");
+          span.textContent = ch === " " ? " " : ch;
+          span.style.opacity = "0";
+          span.style.transition = "opacity 0.18s ease";
+          el.appendChild(span);
+          return span;
+        });
+
+        let idx = 0;
+        const step = () => {
+          if (idx < spans.length) {
+            spans[idx].style.opacity = "1";
+            idx++;
+            letteringTimer = setTimeout(step, 110);
+          } else {
+            letteringTimer = setTimeout(() => {
+              spans.forEach((s) => { s.style.opacity = "0"; });
+              idx = 0;
+              letteringTimer = setTimeout(step, 400);
+            }, 2000);
+          }
+        };
+        step();
+      }
+    }
+
     // ── IntersectionObserver ─────────────────────────────────────
     if (motion !== "still") {
       const scrollRoot = container.closest<HTMLElement>(".device-inner");
@@ -431,8 +487,9 @@ export function MotionController({ motion }: { motion: MotionId }) {
     return () => {
       obs?.disconnect();
       stopCanvas();
+      stopLettering();
     };
-  }, [motion]);
+  }, [motion, letteringText]);
 
   return <span ref={anchorRef} style={{ display: "none" }} aria-hidden />;
 }

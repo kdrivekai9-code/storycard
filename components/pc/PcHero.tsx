@@ -79,7 +79,6 @@ export function PcHero() {
                   </div>
                   <div className="ad-text-sub">{slide.sub}</div>
                 </div>
-                <span className="ad-shine" aria-hidden="true" />
               </div>
             );
           })}

@@ -81,17 +81,9 @@ export async function GET(request: Request) {
     const { data: { user: sessionUser } } = await supabase.auth.getUser();
     const { data: profile } = await supabase
       .from("profiles")
-      .select("onboarding_done, role, phone")
+      .select("onboarding_done, role, phone, nickname")
       .eq("id", sessionUser?.id ?? "")
       .single();
-
-    // 네이버에서 받은 전화번호를 프로필에 저장 (아직 없는 경우)
-    if (sessionUser && naverUser.mobile && !profile?.phone) {
-      await supabase
-        .from("profiles")
-        .update({ phone: naverUser.mobile })
-        .eq("id", sessionUser.id);
-    }
 
     // 관리자 계정은 스토리카드 메인 로그인 불가 — 세션 해제 후 차단 안내
     if (profile?.role === "admin") {
@@ -101,7 +93,25 @@ export async function GET(request: Request) {
       return res;
     }
 
-    const needsOnboarding = !profile?.onboarding_done || !hasRealEmail;
+    const profileUpdates: Record<string, string | boolean> = {};
+
+    // 네이버에서 받은 전화번호·이름을 프로필에 저장 (아직 없는 경우)
+    if (naverUser.mobile && !profile?.phone) profileUpdates.phone = naverUser.mobile;
+    if (naverUser.name && !profile?.nickname) profileUpdates.nickname = naverUser.name;
+
+    // 필수 정보(이름·휴대전화·이메일)가 이미 모두 있으면 회원가입 페이지를 건너뜀
+    const effectivePhone = (profileUpdates.phone as string | undefined) ?? profile?.phone ?? null;
+    const effectiveName  = (profileUpdates.nickname as string | undefined) ?? profile?.nickname ?? null;
+
+    const needsOnboarding = !effectiveName || !effectivePhone || !hasRealEmail;
+
+    if (!needsOnboarding && !profile?.onboarding_done) {
+      profileUpdates.onboarding_done = true;
+    }
+
+    if (sessionUser && Object.keys(profileUpdates).length > 0) {
+      await supabase.from("profiles").update(profileUpdates).eq("id", sessionUser.id);
+    }
 
     const response = NextResponse.redirect(
       needsOnboarding

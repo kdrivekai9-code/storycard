@@ -10,6 +10,7 @@ const NAV_ITEMS = [
   { href: "/admin/applications", label: "신청관리" },
   { href: "/admin/qna", label: "Q&A 관리" },
   { href: "/admin/samples", label: "샘플등록관리" },
+  { href: "/admin/bgm", label: "배경음악 관리" },
   { href: "/admin/reviews", label: "리뷰관리" },
   { href: "/admin/account", label: "계정설정" },
 ];

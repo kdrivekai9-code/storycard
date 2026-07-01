@@ -87,3 +87,28 @@ export async function updateInvitation(id: string, userData: UserData, answers: 
 
   return { ok: true as const };
 }
+
+/** invitation_photos 테이블을 전달받은 storage 경로 순서로 교체 (첫 장 = main, 나머지 = gallery) */
+export async function syncInvitationPhotos(invitationId: string, storagePaths: string[]) {
+  const supabase = await createClient();
+  const { data: auth } = await supabase.auth.getUser();
+
+  if (!auth.user) {
+    return { ok: false as const, error: "not_authenticated" as const };
+  }
+
+  await supabase.from("invitation_photos").delete().eq("invitation_id", invitationId);
+
+  if (storagePaths.length > 0) {
+    const rows = storagePaths.map((storage_path, i) => ({
+      invitation_id: invitationId,
+      role: i === 0 ? "main" : "gallery",
+      storage_path,
+      sort_order: i,
+    }));
+    const { error } = await supabase.from("invitation_photos").insert(rows);
+    if (error) return { ok: false as const, error: error.message };
+  }
+
+  return { ok: true as const };
+}

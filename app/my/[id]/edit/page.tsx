@@ -8,7 +8,9 @@ import { PcHeader } from "@/components/pc/PcHeader";
 import { PcFooter } from "@/components/pc/PcFooter";
 import { PcLiveEditor } from "@/components/pc/PcLiveEditor";
 import { PcEmulator } from "@/components/pc/PcEmulator";
+import { PcPremium } from "@/components/pc/PcPremium";
 import { isoToDateInput, isoToTimeInput } from "@/lib/invitation/utils";
+import { invitationPhotoPublicUrl } from "@/lib/invitation/photoUpload";
 import type { StyleAnswers } from "@/lib/invitation/types";
 
 export default function EditPage() {
@@ -17,6 +19,8 @@ export default function EditPage() {
   const id = params.id as string;
   const setUserData = useInvitationStore((s) => s.setUserData);
   const setAnswer = useInvitationStore((s) => s.setAnswer);
+  const setPhotos = useInvitationStore((s) => s.setPhotos);
+  const setSaved = useInvitationStore((s) => s.setSaved);
   const [ready, setReady] = useState(false);
   const [slug, setSlug] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -55,10 +59,21 @@ export default function EditPage() {
         setAnswer(k, answers[k] as never);
       });
 
+      const { data: photoRows } = await supabase
+        .from("invitation_photos")
+        .select("storage_path")
+        .eq("invitation_id", id)
+        .order("sort_order", { ascending: true });
+
+      if (photoRows && photoRows.length > 0) {
+        setPhotos(photoRows.map((p) => invitationPhotoPublicUrl(p.storage_path)));
+      }
+
+      setSaved(inv.id, inv.slug);
       setSlug(inv.slug);
       setReady(true);
     });
-  }, [id, setUserData, setAnswer, router]);
+  }, [id, setUserData, setAnswer, setPhotos, setSaved, router]);
 
   if (error) {
     return (
@@ -85,6 +100,7 @@ export default function EditPage() {
       <div className="pc-grid" style={{ padding: "0 48px", maxWidth: 1400, margin: "0 auto" }}>
         <main className="pc-main">
           <PcLiveEditor invitationId={id} invitationSlug={slug ?? undefined} />
+          <PcPremium />
         </main>
         <PcEmulator />
       </div>

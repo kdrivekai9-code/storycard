@@ -19,9 +19,12 @@ interface InvitationStore {
   userData: UserData;
   answers: StyleAnswers;
   photos: string[];
+  savedInvitationId: string | null;
+  savedSlug: string | null;
   setUserData: (patch: Partial<UserData>) => void;
   setAnswer: <K extends keyof StyleAnswers>(key: K, value: StyleAnswers[K]) => void;
   setPhotos: (photos: string[]) => void;
+  setSaved: (id: string, slug: string) => void;
   reset: () => void;
 }
 
@@ -29,6 +32,8 @@ export const useInvitationStore = create<InvitationStore>((set) => ({
   userData: { ...DEFAULT_USER_DATA },
   answers: {},
   photos: [],
+  savedInvitationId: null,
+  savedSlug: null,
 
   setUserData: (patch) =>
     set((state) => ({ userData: { ...state.userData, ...patch } })),
@@ -38,5 +43,14 @@ export const useInvitationStore = create<InvitationStore>((set) => ({
 
   setPhotos: (photos) => set({ photos }),
 
-  reset: () => set({ userData: { ...DEFAULT_USER_DATA }, answers: {}, photos: [] }),
+  setSaved: (id, slug) => set({ savedInvitationId: id, savedSlug: slug }),
+
+  reset: () =>
+    set({
+      userData: { ...DEFAULT_USER_DATA },
+      answers: {},
+      photos: [],
+      savedInvitationId: null,
+      savedSlug: null,
+    }),
 }));

@@ -90,7 +90,7 @@ export async function GET(request: Request) {
 
       const { data: profile } = await supabase
         .from("profiles")
-        .select("onboarding_done, role, phone, shipping_address, receiver_name")
+        .select("onboarding_done, role, phone, nickname, shipping_address, receiver_name")
         .eq("id", user?.id ?? "")
         .single();
 
@@ -99,14 +99,13 @@ export async function GET(request: Request) {
         return NextResponse.redirect(`${origin}/login?blocked=admin`);
       }
 
-      const profileUpdates: Record<string, string> = {};
+      const profileUpdates: Record<string, string | boolean> = {};
 
       if (providerToken) {
         // 카카오 프로필 API로 전화번호·이름 수집
         const kakaoProfile = await fetchKakaoProfile(providerToken);
-        if (kakaoProfile.phone && !profile?.phone) {
-          profileUpdates.phone = kakaoProfile.phone;
-        }
+        if (kakaoProfile.phone && !profile?.phone) profileUpdates.phone = kakaoProfile.phone;
+        if (kakaoProfile.name && !profile?.nickname) profileUpdates.nickname = kakaoProfile.name;
 
         // 배송지 API로 주소 수집
         if (!profile?.shipping_address) {
@@ -119,11 +118,20 @@ export async function GET(request: Request) {
         }
       }
 
+      // 필수 정보(이름·휴대전화·이메일)가 이미 모두 있으면 회원가입 페이지를 건너뜀
+      const effectivePhone = (profileUpdates.phone as string | undefined) ?? profile?.phone ?? null;
+      const effectiveName  = (profileUpdates.nickname as string | undefined) ?? profile?.nickname ?? null;
+      const hasRealEmail = !isPlaceholderEmail(user?.email);
+
+      const needsOnboarding = !effectiveName || !effectivePhone || !hasRealEmail;
+
+      if (!needsOnboarding && !profile?.onboarding_done) {
+        profileUpdates.onboarding_done = true;
+      }
+
       if (user && Object.keys(profileUpdates).length > 0) {
         await supabase.from("profiles").update(profileUpdates).eq("id", user.id);
       }
-
-      const needsOnboarding = !profile?.onboarding_done || isPlaceholderEmail(user?.email);
 
       return NextResponse.redirect(
         needsOnboarding

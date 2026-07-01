@@ -56,7 +56,7 @@ export default function LoginPage() {
       provider: "kakao",
       options: {
         redirectTo: `${window.location.origin}/auth/callback`,
-        scopes: "profile_nickname profile_image account_email phone_number name",
+        scopes: "profile_nickname profile_image account_email phone_number name shipping_address",
       },
     });
   }
@@ -99,43 +99,22 @@ export default function LoginPage() {
             </button>
           </div>
 
-          {provider === "naver" ? (
-            <div className="login-panel naver">
+          <div className="login-panel combined">
+            <div className="login-panel-icons">
               <div className="login-panel-icon naver">
                 <NaverIcon />
               </div>
-              <p className="login-panel-title">네이버 아이디로 로그인</p>
-              <p className="login-panel-desc">
-                네이버 계정으로 간편하게 로그인하고
-                <br />
-                STORYCARD를 이용해보세요.
-              </p>
-              <button type="button" className="login-action-btn naver" onClick={handleNaverLogin}>
-                <span style={{ width: 18, height: 18, flexShrink: 0, display: "inline-flex" }}>
-                  <NaverIcon />
-                </span>
-                네이버로 로그인
-              </button>
-            </div>
-          ) : (
-            <div className="login-panel kakao">
               <div className="login-panel-icon kakao">
                 <KakaoIcon />
               </div>
-              <p className="login-panel-title">카카오 계정으로 로그인</p>
-              <p className="login-panel-desc">
-                카카오 계정으로 간편하게 로그인하고
-                <br />
-                STORYCARD를 이용해보세요.
-              </p>
-              <button type="button" className="login-action-btn kakao" onClick={handleKakaoLogin}>
-                <span style={{ width: 18, height: 18, flexShrink: 0, display: "inline-flex" }}>
-                  <KakaoIcon />
-                </span>
-                카카오로 로그인
-              </button>
             </div>
-          )}
+            <p className="login-panel-title">간편 회원가입 / 로그인</p>
+            <p className="login-panel-desc">
+              네이버 / 카카오계정으로 간편하게 회원가입 및
+              <br />
+              로그인하고 STORYCARD를 이용해보세요.
+            </p>
+          </div>
 
           <Link href="/" className="login-back">
             ← 홈으로 돌아가기

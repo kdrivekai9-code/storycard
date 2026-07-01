@@ -36,7 +36,8 @@ export type MotionId =
   | "bubble"
   | "snow"
   | "autumn"
-  | "summer";
+  | "summer"
+  | "lettering";
 
 export type ToneId = "formal" | "warm" | "witty";
 
@@ -64,6 +65,7 @@ export interface StyleAnswers {
   motion?: MotionId; // Q6
   tone?: ToneId; // Q7
   coverTextColor?: string; // PC LIVE EDITOR Q4 · 표지 텍스트 컬러
+  letteringText?: string; // 움직임="레터링" 선택 시 표지 상단에 타이핑되는 문구
 }
 
 /** 분위기/색감이 결정하는 색상 토큰 */
@@ -89,6 +91,7 @@ export interface InvitationConfig {
   motion: MotionId;
   tone: ToneId;
   coverTextColor?: string;
+  letteringText?: string;
   theme: ThemeTokens;
   greeting: string;
 }
@@ -102,6 +105,10 @@ export interface BoundInvitationData extends UserData {
   namesKo: string;
   venueShort: string;
   dateLong: string;
+  dateDot: string;
+  timeDot: string;
+  datePeriod: string;
+  dayTime: string;
   dateBig: string;
   timeBig: string;
   groomParents: string;

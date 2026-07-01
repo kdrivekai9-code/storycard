@@ -94,6 +94,37 @@ export function buildDateLong(date: string, time: string): string {
   return `${m[1]} · ${m[2].padStart(2, "0")} · ${m[3].padStart(2, "0")} · ${dayEn} · ${t}`;
 }
 
+/** "2026.10.18 (토)" → "2026 . 10 . 18" */
+export function buildDateDot(date: string): string {
+  const m = (date || "").match(/(\d{4})[.\-\s]*(\d{1,2})[.\-\s]*(\d{1,2})/);
+  if (!m) return date || "";
+  return `${m[1]} . ${m[2].padStart(2, "0")} . ${m[3].padStart(2, "0")}`;
+}
+
+/** "오후 1:30" → "1시 30 PM" */
+export function buildTimeDot(time: string): string {
+  const isPM = /오후|PM|pm/.test(time || "");
+  const tm = (time || "").match(/(\d{1,2}):(\d{2})/);
+  const hh = tm ? String(Number(tm[1])) : "0";
+  const mm = (tm ? tm[2] : "0").padStart(2, "0");
+  return `${hh}시 ${mm} ${isPM ? "PM" : "AM"}`;
+}
+
+/** "2026.10.18 (토)" → "2026. 10. 18" */
+export function buildDatePeriod(date: string): string {
+  const m = (date || "").match(/(\d{4})[.\-\s]*(\d{1,2})[.\-\s]*(\d{1,2})/);
+  if (!m) return date || "";
+  return `${m[1]}. ${m[2].padStart(2, "0")}. ${m[3].padStart(2, "0")}`;
+}
+
+/** "2026.10.18 (토)" + "오후 2:30" → "SAT. 2:30 PM" */
+export function buildDayTime(date: string, time: string): string {
+  const day = (date || "").match(/\(([^)]+)\)/)?.[1] || "";
+  const dayEn = DAY_EN[day] || "";
+  const t = parseTime(time);
+  return dayEn ? `${dayEn}. ${t}` : t;
+}
+
 /** "2026.10.18 (토)" → "October 18, 2026" */
 export function buildDateBig(date: string): string {
   const m = (date || "").match(/(\d{4})[.\-\s]*(\d{1,2})[.\-\s]*(\d{1,2})/);
@@ -152,6 +183,10 @@ export function deriveInvitationData(
       (d.venue || "").replace(/그랜드볼룸|볼룸|홀.*$/, "").trim().toUpperCase() ||
       "VENUE",
     dateLong: buildDateLong(d.dateInput, d.timeInput),
+    dateDot: buildDateDot(d.dateInput),
+    timeDot: buildTimeDot(d.timeInput),
+    datePeriod: buildDatePeriod(d.dateInput),
+    dayTime: buildDayTime(d.dateInput, d.timeInput),
     dateBig: buildDateBig(d.dateInput),
     timeBig: buildTimeBig(d.dateInput, d.timeInput),
     groomParents: `${d.groomFather} · ${d.groomMother}`,

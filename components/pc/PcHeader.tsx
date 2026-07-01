@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
 
@@ -40,6 +40,7 @@ function CardIcon() {
 
 export function PcHeader() {
   const router = useRouter();
+  const pathname = usePathname();
   const [user, setUser] = useState<User | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const navUserRef = useRef<HTMLDivElement>(null);
@@ -124,8 +125,22 @@ export function PcHeader() {
                     <PersonIcon />
                   )}
                 </div>
-                <div className="pc-nav-dropdown-name">{getDisplayName(user)}</div>
-                {user.email && <div className="pc-nav-dropdown-email">{user.email}</div>}
+                <Link
+                  href={`/auth/complete-profile?next=${encodeURIComponent(pathname || "/")}`}
+                  className="pc-nav-dropdown-name"
+                  onClick={() => setMenuOpen(false)}
+                >
+                  {getDisplayName(user)}
+                </Link>
+                {user.email && (
+                  <Link
+                    href={`/auth/complete-profile?next=${encodeURIComponent(pathname || "/")}`}
+                    className="pc-nav-dropdown-email"
+                    onClick={() => setMenuOpen(false)}
+                  >
+                    {user.email}
+                  </Link>
+                )}
                 <Link href="/my" className="pc-nav-dropdown-link" onClick={() => setMenuOpen(false)}>
                   <CardIcon />
                   MY청첩장

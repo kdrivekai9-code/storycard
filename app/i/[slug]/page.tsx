@@ -22,6 +22,19 @@ export default async function InvitationPage({
 
   if (!inv) return notFound();
 
+  const { data: photoRows } = await supabase
+    .from("invitation_photos")
+    .select("storage_path")
+    .eq("invitation_id", inv.id)
+    .order("sort_order", { ascending: true });
+
+  // storage_path는 일반 사진 경로뿐 아니라 프리미엄 영상의 외부 CDN URL(절대 URL)도 담을 수 있음
+  const photos = (photoRows ?? []).map((p) =>
+    p.storage_path.startsWith("http://") || p.storage_path.startsWith("https://")
+      ? p.storage_path
+      : supabase.storage.from("invitation-photos").getPublicUrl(p.storage_path).data.publicUrl,
+  );
+
   const family = (inv.family ?? {}) as Record<string, string>;
   const userData: UserData = {
     groom: inv.groom_name,
@@ -42,7 +55,7 @@ export default async function InvitationPage({
 
   return (
     <div className="inv-page-wrap">
-      <InvitationRenderer config={config} userData={userData} bound={bound} />
+      <InvitationRenderer config={config} userData={userData} bound={bound} photos={photos} />
     </div>
   );
 }

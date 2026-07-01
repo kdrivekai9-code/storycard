@@ -14,10 +14,13 @@ export function InvitationRenderer({
   config,
   userData,
   bound,
+  photos,
 }: {
   config: InvitationConfig;
   userData: UserData;
   bound: BoundInvitationData;
+  /** 지정 시 전역 스토어 대신 이 사진 목록을 사용 (게시된 청첩장 서버 렌더링용) */
+  photos?: string[];
 }) {
   const { theme, sections, motion } = config;
 
@@ -41,13 +44,13 @@ export function InvitationRenderer({
         } as React.CSSProperties
       }
     >
-      <MotionController motion={motion} />
-      <CoverSection bound={bound} cover={config.cover} coverTextColor={config.coverTextColor} />
+      <MotionController motion={motion} letteringText={config.letteringText} />
+      <CoverSection bound={bound} cover={config.cover} coverTextColor={config.coverTextColor} photos={photos} />
 
       {sections.includes("greeting") && <GreetingSection bound={bound} />}
       <FamilySection bound={bound} />
       <WhenSection userData={userData} />
-      {sections.includes("gallery") && <GallerySection photoDensity={config.photoDensity} />}
+      {sections.includes("gallery") && <GallerySection photoDensity={config.photoDensity} photos={photos} />}
       {sections.includes("map") && <MapSection userData={userData} />}
       {sections.includes("rsvp") && <RsvpSection />}
       {sections.includes("account") && <AccountSection userData={userData} />}

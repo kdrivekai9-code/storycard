@@ -34,6 +34,7 @@ export function mergeConfig(answers: StyleAnswers): InvitationConfig {
     motion,
     tone,
     coverTextColor: answers.coverTextColor,
+    letteringText: answers.letteringText ?? "Our wedding day",
     theme: computeTheme(mood, answers.palette),
     greeting: buildGreeting(tone),
   };
