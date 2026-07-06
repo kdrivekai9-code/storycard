@@ -61,6 +61,21 @@ const PROMPT_OPTIONS = [
   },
 ];
 
+const BG_CHANGE_OPTIONS = [
+  {
+    id: "california-coast",
+    label: "가. 해안선도로",
+    image: "/samples/bg-california-coast.jpg",
+    prompt: "A cinematic, full-body photograph capturing the same bride and groom from the source image, whose facial features, identities, and specific expressions must be strictly preserved and completely identical to the source photo — do not alter, enhance, or modify the face or expression in any way. The exact smile, eye shape, lip position, and overall facial structure must remain unchanged. They are standing naturally and comfortably beside a classic red vintage convertible, their poses relaxed and harmonious with the car — the groom's hand resting gently on the car door or the bride's hand lightly touching the vehicle, as if they belong in this scene. The car is richly decorated with lush floral arrangements of white roses and greenery for a wedding, parked on a dramatic steep cliffside turnout of the scenic California coastline highway, offering breathtaking views of the winding road and Pacific Ocean below. The warm golden-hour sunset light (golden-orange, pink, and purple hues) falls naturally on the couple, casting soft directional rim lighting along their shoulders and hair that seamlessly matches the surrounding environment. The couple's skin tones, clothing colors, and shadows are all adjusted to reflect the warm amber and rose-tinted glow of the setting sun, ensuring they feel fully immersed in the scene rather than composited. Gentle lens flare and atmospheric haze add depth and cinematic realism. In the far distance along the highway, an 18-wheeler truck is seen as a very small object far behind the car. High-end photography, sharp focus on faces, vibrant colors, photorealistic.",
+  },
+  {
+    id: "mediterranean",
+    label: "나. 지중해",
+    image: "/samples/bg-mediterranean.jpg",
+    prompt: "A cinematic photograph of the same bride and groom from the source image, seated naturally and comfortably side by side on a low Mediterranean stone wall. Their hands rest naturally and relaxed on the wall surface beside them. Their facial features, identities, and specific expressions must be strictly preserved and completely identical to the source photo — do not alter, enhance, or modify the face or expression in any way. The exact smile, eye shape, lip position, and overall facial structure must remain unchanged. Change the couple's clothing to naturally suit the Mediterranean summer atmosphere: the bride wears a flowy, lightweight white or pastel linen dress with delicate details appropriate for a romantic Mediterranean setting, and the groom wears a relaxed linen shirt in white or light beige with casual linen trousers — both outfits feel effortless, elegant, and perfectly matched to the warm coastal environment. The background is a stunning Mediterranean scene with iconic whitewashed buildings, cascading bougainvillea flowers in soft pink and magenta, and a deep blue Aegean Sea stretching to the horizon. The bright Mediterranean sunlight falls naturally on the couple, with soft warm shadows that seamlessly match the direction and quality of light in the background scene. The couple's skin tones, clothing colors, and overall color grading are naturally harmonized with the warm, luminous, sun-drenched Mediterranean atmosphere — they feel fully present in the scene, not composited. Crystal-clear turquoise water, terracotta rooftops, and a vivid blue sky with soft white clouds frame the scene. High-end photography, sharp focus on faces, vibrant colors, photorealistic.",
+  },
+];
+
 const WATERCOLOR_ILLUSTRATION_DEFAULT_PROMPT = "A beautiful wedding illustration, watercolor painting style, soft wet-on-wet technique, vibrant bleeding colors, delicate artistic brushstrokes on textured paper, dreamy atmosphere, soft pastel palette, masterpiece, painterly aesthetic, no photographic texture";
 const WEBTOON_DEFAULT_PROMPT = "해당 이미지를 만화속 주인공처럼 웹툰형식으로 변경";
 
@@ -68,10 +83,11 @@ const SERVICE_TYPES = [
   { id: "video-effect", label: "프리미엄서비스1", title: "이미지 → 영상효과" },
   { id: "watercolor-illustration", label: "프리미엄서비스2", title: "이미지 → 수채화풍 일러스트" },
   { id: "webtoon", label: "프리미엄서비스3", title: "이미지 → 웹툰풍" },
+  { id: "bg-change", label: "프리미엄서비스4", title: "배경이미지 변경" },
 ];
 
-// 사진 1장 → 이미지(영상이 아님) 결과를 만드는 서비스들 — Flux Pro 1.1 기반, 배경음악 합성 불필요
-const IMAGE_STYLE_SERVICE_IDS = new Set(["watercolor-illustration", "webtoon"]);
+// 사진 1장 → 이미지(영상이 아님) 결과를 만드는 서비스들 — 배경음악 합성 불필요, img 태그로 표시
+const IMAGE_STYLE_SERVICE_IDS = new Set(["watercolor-illustration", "webtoon", "bg-change"]);
 
 function getDefaultPromptForService(serviceId: string): string {
   if (serviceId === "webtoon") return WEBTOON_DEFAULT_PROMPT;
@@ -294,7 +310,10 @@ export function PcPremium() {
       }
       // 서버 재조회 없이 로컬 상태만 즉시 반영 — 별도 useEffect가 필요 시 재동기화
       setPremiumOutputs((prev) => prev.filter((o) => !deletingIds.includes(o.id)));
-      setPhotos(useInvitationStore.getState().photos.filter((src) => !deletingUrls.includes(src)));
+      const nextPhotos = useInvitationStore.getState().photos.filter((src) => !deletingUrls.includes(src));
+      setPhotos(nextPhotos);
+      // 삭제된 사진이 현재 선택 인덱스라면 선택 해제
+      setSelectedPhoto((prev) => (prev !== null && nextPhotos[prev] ? prev : null));
     } catch {
       alert("삭제 중 오류가 발생했습니다.");
     } finally {
@@ -352,7 +371,7 @@ export function PcPremium() {
     isSaved &&
     selectedPhoto !== null &&
     !isVideoUrl(photos[selectedPhoto] ?? "") &&
-    (selectedServiceType === "video-effect" ? !!prompt : true) &&
+    (["video-effect", "bg-change"].includes(selectedServiceType) ? !!prompt : true) &&
     !submitting &&
     !isRunning;
 
@@ -407,12 +426,12 @@ export function PcPremium() {
       return;
     }
 
-    if (selectedPhoto === null) {
-      alert("프리미엄 서비스를 이용할 사진 선택을 해주세요.");
+    if (selectedPhoto === null || !photos[selectedPhoto]) {
+      alert("작업하실 이미지를 선택해주세요.");
       return;
     }
 
-    if (isVideoUrl(photos[selectedPhoto] ?? "")) {
+    if (isVideoUrl(photos[selectedPhoto])) {
       alert("프리미엄 서비스를 이용할 사진(이미지)을 선택해주세요.");
       return;
     }
@@ -422,11 +441,18 @@ export function PcPremium() {
       return;
     }
 
+    if (selectedServiceType === "bg-change" && !prompt) {
+      alert("배경 스타일을 선택하세요.");
+      return;
+    }
+
     if (submitting) return;
 
-    const finalPromptText = IMAGE_STYLE_SERVICE_IDS.has(selectedServiceType)
-      ? (customPrompt.trim() !== "" ? customPrompt : getDefaultPromptForService(selectedServiceType))
-      : (PROMPT_OPTIONS.find((p) => p.id === prompt)?.desc || "");
+    const finalPromptText = selectedServiceType === "bg-change"
+      ? (BG_CHANGE_OPTIONS.find((o) => o.id === prompt)?.prompt || "")
+      : IMAGE_STYLE_SERVICE_IDS.has(selectedServiceType)
+        ? (customPrompt.trim() !== "" ? customPrompt : getDefaultPromptForService(selectedServiceType))
+        : (PROMPT_OPTIONS.find((p) => p.id === prompt)?.desc || "");
 
     if (!finalPromptText) return;
 
@@ -471,6 +497,18 @@ export function PcPremium() {
       // 업로드된 원본 사진을 store에도 반영 (blob: → 영구 URL)
       setPhotos(photos.map((p, i) => (i === selectedPhoto ? publicPhotoUrl : p)));
 
+      const selectedBgOption = BG_CHANGE_OPTIONS.find((o) => o.id === prompt);
+      let bgImageUrl: string | null = null;
+      if (selectedServiceType === "bg-change" && selectedBgOption) {
+        // 브라우저에서 샘플 이미지를 fetch → blob URL → Supabase Storage 업로드 → 공개 URL
+        // (Edge Function은 localhost에 접근 불가하므로 공개 URL로 변환 필요)
+        const bgBlob = await fetch(selectedBgOption.image).then((r) => r.blob());
+        const bgBlobUrl = URL.createObjectURL(bgBlob);
+        const [bgPath] = await uploadInvitationPhotos(savedInvitationId, user.id, [bgBlobUrl]);
+        URL.revokeObjectURL(bgBlobUrl);
+        bgImageUrl = invitationPhotoPublicUrl(bgPath);
+      }
+
       const result = await requestPremiumVideo({
         invitationId: savedInvitationId,
         photoPath: resizedPath,
@@ -478,6 +516,7 @@ export function PcPremium() {
         bgmTrackId: selectedBgm,
         promptId: selectedServiceType,
         promptText: finalPromptText,
+        bgImageUrl,
       });
 
       console.log("[PcPremium] requestPremiumVideo:result", result);
@@ -727,7 +766,37 @@ export function PcPremium() {
               </div>
             )}
 
-            {IMAGE_STYLE_SERVICE_IDS.has(selectedServiceType) && (
+            {selectedServiceType === "bg-change" && (
+              <div className="premium-flow-step">
+                <div className="premium-flow-title">4. 배경 스타일 선택 (필수)</div>
+                <div style={{ display: "flex", flexDirection: "row", gap: "12px", flexWrap: "wrap" }}>
+                  {BG_CHANGE_OPTIONS.map((opt) => (
+                    <label
+                      key={opt.id}
+                      className={`premium-prompt-item${prompt === opt.id ? " active" : ""}`}
+                      style={{ flexDirection: "column", alignItems: "flex-start", gap: "8px", width: "150px" }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                        <input
+                          type="radio"
+                          name="bg-option"
+                          checked={prompt === opt.id}
+                          onChange={() => setPrompt(opt.id)}
+                        />
+                        <div className="premium-prompt-label">{opt.label}</div>
+                      </div>
+                      <img
+                        src={opt.image}
+                        alt={opt.label}
+                        style={{ width: "150px", height: "200px", borderRadius: "8px", objectFit: "cover" }}
+                      />
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {IMAGE_STYLE_SERVICE_IDS.has(selectedServiceType) && selectedServiceType !== "bg-change" && (
               <div className="premium-flow-step">
                 <div className="premium-flow-title">
                   4. {SERVICE_TYPES.find((s) => s.id === selectedServiceType)?.label}{" "}
@@ -751,7 +820,7 @@ export function PcPremium() {
                 중지하기
               </button>
             ) : (
-              <button className="upbtn" type="button" onClick={handleGenerate} disabled={!canGenerate}>
+              <button className="upbtn" type="button" onClick={handleGenerate} disabled={submitting || isRunning}>
                 {submitting ? "요청 중…" : "제작하기"}
               </button>
             )}
