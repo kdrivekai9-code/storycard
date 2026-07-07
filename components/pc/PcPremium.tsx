@@ -65,13 +65,15 @@ const BG_CHANGE_OPTIONS = [
   {
     id: "california-coast",
     label: "가. 해안선도로",
-    image: "/samples/bg-california-coast.jpg",
+    image: "/samples/bg-california-coast.jpg",          // UI 미리보기용 (인물 있는 샘플)
+    modelImage: "/samples/bg-california-coast-bg.jpg",  // 모델 전송용 (인물 없는 배경만)
     prompt: "A cinematic, full-body photograph capturing the same bride and groom from the source image, whose facial features, identities, and specific expressions must be strictly preserved and completely identical to the source photo — do not alter, enhance, or modify the face or expression in any way. The exact smile, eye shape, lip position, and overall facial structure must remain unchanged. They are standing naturally and comfortably beside a classic red vintage convertible, their poses relaxed and harmonious with the car — the groom's hand resting gently on the car door or the bride's hand lightly touching the vehicle, as if they belong in this scene. The car is richly decorated with lush floral arrangements of white roses and greenery for a wedding, parked on a dramatic steep cliffside turnout of the scenic California coastline highway, offering breathtaking views of the winding road and Pacific Ocean below. The warm golden-hour sunset light (golden-orange, pink, and purple hues) falls naturally on the couple, casting soft directional rim lighting along their shoulders and hair that seamlessly matches the surrounding environment. The couple's skin tones, clothing colors, and shadows are all adjusted to reflect the warm amber and rose-tinted glow of the setting sun, ensuring they feel fully immersed in the scene rather than composited. Gentle lens flare and atmospheric haze add depth and cinematic realism. In the far distance along the highway, an 18-wheeler truck is seen as a very small object far behind the car. High-end photography, sharp focus on faces, vibrant colors, photorealistic.",
   },
   {
     id: "mediterranean",
     label: "나. 지중해",
-    image: "/samples/bg-mediterranean.jpg",
+    image: "/samples/bg-mediterranean.jpg",             // UI 미리보기용 (인물 있는 샘플)
+    modelImage: "/samples/bg-mediterranean-bg.jpg",     // 모델 전송용 (인물 없는 배경만)
     prompt: "A cinematic photograph of the same bride and groom from the source image, seated naturally and comfortably side by side on a low Mediterranean stone wall. Their hands rest naturally and relaxed on the wall surface beside them. Their facial features, identities, and specific expressions must be strictly preserved and completely identical to the source photo — do not alter, enhance, or modify the face or expression in any way. The exact smile, eye shape, lip position, and overall facial structure must remain unchanged. Change the couple's clothing to naturally suit the Mediterranean summer atmosphere: the bride wears a flowy, lightweight white or pastel linen dress with delicate details appropriate for a romantic Mediterranean setting, and the groom wears a relaxed linen shirt in white or light beige with casual linen trousers — both outfits feel effortless, elegant, and perfectly matched to the warm coastal environment. The background is a stunning Mediterranean scene with iconic whitewashed buildings, cascading bougainvillea flowers in soft pink and magenta, and a deep blue Aegean Sea stretching to the horizon. The bright Mediterranean sunlight falls naturally on the couple, with soft warm shadows that seamlessly match the direction and quality of light in the background scene. The couple's skin tones, clothing colors, and overall color grading are naturally harmonized with the warm, luminous, sun-drenched Mediterranean atmosphere — they feel fully present in the scene, not composited. Crystal-clear turquoise water, terracotta rooftops, and a vivid blue sky with soft white clouds frame the scene. High-end photography, sharp focus on faces, vibrant colors, photorealistic.",
   },
 ];
@@ -500,9 +502,9 @@ export function PcPremium() {
       const selectedBgOption = BG_CHANGE_OPTIONS.find((o) => o.id === prompt);
       let bgImageUrl: string | null = null;
       if (selectedServiceType === "bg-change" && selectedBgOption) {
-        // 브라우저에서 샘플 이미지를 fetch → blob URL → Supabase Storage 업로드 → 공개 URL
+        // 모델 전송용(인물 없는 배경만) 이미지를 Supabase Storage에 업로드 → 공개 URL 획득
         // (Edge Function은 localhost에 접근 불가하므로 공개 URL로 변환 필요)
-        const bgBlob = await fetch(selectedBgOption.image).then((r) => r.blob());
+        const bgBlob = await fetch(selectedBgOption.modelImage).then((r) => r.blob());
         const bgBlobUrl = URL.createObjectURL(bgBlob);
         const [bgPath] = await uploadInvitationPhotos(savedInvitationId, user.id, [bgBlobUrl]);
         URL.revokeObjectURL(bgBlobUrl);
