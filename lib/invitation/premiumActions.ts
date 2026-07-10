@@ -61,6 +61,7 @@ export async function requestPremiumVideo(params: {
   promptId: string;
   promptText: string;
   bgImageUrl?: string | null;
+  bgSeed?: number | null;
 }): Promise<{ ok: true; id: string; startLogs?: string[] } | { ok: false; error: string }> {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -86,7 +87,7 @@ export async function requestPremiumVideo(params: {
 
   const { data: { session } } = await supabase.auth.getSession();
   const { data: fnData, error: fnError } = await supabase.functions.invoke("generate-premium-video", {
-    body: { action: "start", premiumVideoId: data.id, bgImageUrl: params.bgImageUrl ?? null },
+    body: { action: "start", premiumVideoId: data.id, bgImageUrl: params.bgImageUrl ?? null, bgSeed: params.bgSeed ?? null },
     headers: session ? { Authorization: `Bearer ${session.access_token}` } : undefined,
   });
   if (fnError) return { ok: false, error: fnError.message };

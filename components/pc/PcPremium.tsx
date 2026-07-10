@@ -21,9 +21,13 @@ const MAX_PHOTOS = 10;
 const MAX_PREMIUM_ATTACH = 2;
 const POLL_INTERVAL_MS = 4000;
 // fal.ai는 정확한 남은 시간을 제공하지 않아, 평균 소요시간을 기준으로 진행률/남은시간을 추정합니다.
-const ESTIMATE_VIDEO_SEC = 90;
-const ESTIMATE_IMAGE_STYLE_SEC = 30;
 const ESTIMATE_MUX_SEC = 20;
+const ESTIMATE_SEC: Record<string, number> = {
+  "video-effect": 90,           // veo3.1/lite/image-to-video (timeout 150s)
+  "watercolor-illustration": 30, // seedream v5/lite/edit (timeout 90s)
+  "webtoon": 30,                 // seedream v5/lite/edit (timeout 90s)
+  "bg-change": 60,               // nano-banana-2/edit (timeout 90s)
+};
 
 function formatMmSs(totalSec: number) {
   const min = Math.floor(totalSec / 60);
@@ -67,6 +71,7 @@ const BG_CHANGE_OPTIONS = [
     label: "가. 해안선도로",
     image: "/samples/bg-california-coast.jpg",          // UI 미리보기용 (인물 있는 샘플)
     modelImage: "/samples/bg-california-coast-bg.jpg",  // 모델 전송용 (인물 없는 배경만)
+    seed: 6222409,
     prompt: "A cinematic, full-body photograph capturing the same bride and groom from the source image, whose facial features, identities, and specific expressions must be strictly preserved and completely identical to the source photo — do not alter, enhance, or modify the face or expression in any way. The exact smile, eye shape, lip position, and overall facial structure must remain unchanged. They are standing naturally and comfortably beside a classic red vintage convertible, their poses relaxed and harmonious with the car — the groom's hand resting gently on the car door or the bride's hand lightly touching the vehicle, as if they belong in this scene. The car is richly decorated with lush floral arrangements of white roses and greenery for a wedding, parked on a dramatic steep cliffside turnout of the scenic California coastline highway, offering breathtaking views of the winding road and Pacific Ocean below. The warm golden-hour sunset light (golden-orange, pink, and purple hues) falls naturally on the couple, casting soft directional rim lighting along their shoulders and hair that seamlessly matches the surrounding environment. The couple's skin tones, clothing colors, and shadows are all adjusted to reflect the warm amber and rose-tinted glow of the setting sun, ensuring they feel fully immersed in the scene rather than composited. Gentle lens flare and atmospheric haze add depth and cinematic realism. In the far distance along the highway, an 18-wheeler truck is seen as a very small object far behind the car. High-end photography, sharp focus on faces, vibrant colors, photorealistic.",
   },
   {
@@ -74,6 +79,7 @@ const BG_CHANGE_OPTIONS = [
     label: "나. 지중해",
     image: "/samples/bg-mediterranean.jpg",             // UI 미리보기용 (인물 있는 샘플)
     modelImage: "/samples/bg-mediterranean-bg.jpg",     // 모델 전송용 (인물 없는 배경만)
+    seed: 6222409,
     prompt: "A cinematic photograph of the same bride and groom from the source image, seated naturally and comfortably side by side on a low Mediterranean stone wall. Their hands rest naturally and relaxed on the wall surface beside them. Their facial features, identities, and specific expressions must be strictly preserved and completely identical to the source photo — do not alter, enhance, or modify the face or expression in any way. The exact smile, eye shape, lip position, and overall facial structure must remain unchanged. Change the couple's clothing to naturally suit the Mediterranean summer atmosphere: the bride wears a flowy, lightweight white or pastel linen dress with delicate details appropriate for a romantic Mediterranean setting, and the groom wears a relaxed linen shirt in white or light beige with casual linen trousers — both outfits feel effortless, elegant, and perfectly matched to the warm coastal environment. The background is a stunning Mediterranean scene with iconic whitewashed buildings, cascading bougainvillea flowers in soft pink and magenta, and a deep blue Aegean Sea stretching to the horizon. The bright Mediterranean sunlight falls naturally on the couple, with soft warm shadows that seamlessly match the direction and quality of light in the background scene. The couple's skin tones, clothing colors, and overall color grading are naturally harmonized with the warm, luminous, sun-drenched Mediterranean atmosphere — they feel fully present in the scene, not composited. Crystal-clear turquoise water, terracotta rooftops, and a vivid blue sky with soft white clouds frame the scene. High-end photography, sharp focus on faces, vibrant colors, photorealistic.",
   },
   {
@@ -81,12 +87,31 @@ const BG_CHANGE_OPTIONS = [
     label: "다. 유럽정원",
     image: "/samples/bg-european-garden.jpg",             // UI 미리보기용 (인물 있는 샘플)
     modelImage: "/samples/bg-european-garden-bg.jpg",     // 모델 전송용 (인물 없는 배경만)
-    prompt: "A cinematic, full-body photograph of the same bride and groom from the source image, standing naturally and elegantly together in a breathtaking European formal garden. Their facial features, identities, and specific expressions must be strictly preserved and completely identical to the source photo — do not alter, enhance, or modify the face or expression in any way. The exact smile, eye shape, lip position, and overall facial structure must remain unchanged. The couple stands on a grand stone pathway flanked by perfectly manicured hedgerows, classical fountains, and symmetrical flower beds bursting with roses, lavender, and seasonal blooms in soft pinks, whites, and purples. Ornate stone balustrades and ivy-draped archways frame the background, with a stately European palace or manor house visible in the distance. Soft, diffused golden afternoon light filters through the garden, casting gentle dappled shadows that naturally match the environment. The couple's skin tones, clothing colors, and overall color grading are harmonized with the lush, romantic, refined atmosphere of the garden — they feel fully immersed in the scene. High-end photography, sharp focus on faces, vibrant colors, photorealistic.",
+    seed: 6222409,
+    prompt: "A cinematic, full-body photograph of the same bride and groom from the source image, walking hand in hand toward the camera along a grand stone pathway in a breathtaking European formal garden. The groom is dressed in a sharp navy blue suit. The bride holds a beautiful bridal bouquet of white roses and soft blooms in her free hand. Their facial features and identities must be strictly preserved and completely identical to the source photo — do not alter, enhance, or modify the face in any way. Both the bride and groom wear a gentle, soft smile — warm and natural, conveying happiness and love. The couple walks naturally and confidently, their posture elegant and relaxed as if strolling through the garden together. Warm golden sunlight falls directly on the couple — illuminating their faces with soft sunlit highlights, casting a gentle warm glow across their clothing, and creating realistic elongated shadows stretching behind them on the stone pathway. The interplay of sunlight and shadow gives the couple a strong sense of physical presence grounded in the scene. The pathway is flanked by perfectly manicured hedgerows, classical fountains, and symmetrical flower beds bursting with roses, lavender, and seasonal blooms in soft pinks, whites, and purples. Ornate stone balustrades and ivy-draped archways frame the background, with a stately European palace or manor house visible in the distance. The light source direction is consistent between the couple and the background — the shadows on the ground and the highlights on the faces all follow the same angle of afternoon sunlight. The couple's skin tones, clothing colors, and overall color grading are harmonized with the lush, romantic, refined atmosphere of the garden — they feel fully immersed in the scene. High-end photography, sharp focus on faces, vibrant colors, photorealistic.",
+  },
+  {
+    id: "sunset-beach",
+    label: "라. Sunset",
+    image: "/samples/bg-sunset-beach.jpg",             // UI 미리보기용 (인물 있는 샘플)
+    modelImage: "/samples/bg-sunset-beach-bg.jpg",     // 모델 전송용 (인물 없는 배경만)
+    seed: 5610233,
+    prompt: "A cinematic, full-body photograph of the same bride and groom from the source image, walking hand in hand barefoot through shallow water along the beach shown in the background image. Their facial features and identities must be strictly preserved and completely identical to the source photo — do not alter, enhance, or modify the face in any way. The groom wears a relaxed beige linen suit — the jacket is unbuttoned and open, with clearly visible linen fabric texture on both the jacket and trousers, giving a casual yet elegant beach look, with his trousers slightly rolled up. The bride wears a white lace wedding dress, gathering the very bottom of her dress skirt with one hand to lift it slightly above the water while holding the groom's hand with the other, both walking forward facing the camera. The bride's hair is gently swept by the sea breeze, with soft strands delicately floating in the wind. The sky, sea, and sunset atmosphere must be preserved exactly as shown in the background image — do not alter or regenerate the sky or horizon colors. The warm sunset glow must visibly tint the couple's faces and clothing — casting a rich amber and rose-golden hue across their skin tones, hair, and fabric, with soft warm highlights along their cheekbones, shoulders, and the edges of the bride's dress, fully consistent with the light direction and color temperature of the background sunset. The wet sand and shallow water beneath their feet reflect the existing sunset colors from the background. The couple's skin tones and overall color grading are harmonized with the background's warm, romantic sunset atmosphere — they feel fully present and immersed in the scene. High-end photography, sharp focus on faces, vibrant colors, photorealistic.",
   },
 ];
 
 const WATERCOLOR_ILLUSTRATION_DEFAULT_PROMPT = "A beautiful wedding illustration, watercolor painting style, soft wet-on-wet technique, vibrant bleeding colors, delicate artistic brushstrokes on textured paper, dreamy atmosphere, soft pastel palette, masterpiece, painterly aesthetic, no photographic texture";
-const WEBTOON_DEFAULT_PROMPT = "해당 이미지를 만화속 주인공처럼 웹툰형식으로 변경";
+const WEBTOON_DEFAULT_PROMPT = "A professional webtoon-style digital illustration based on the provided image. Maintain the exact likeness, facial features, poses, and detailed attire of the couple,\nArt style should feature clean, sharp line art, vibrant digital cel-shading, and flat coloring to achieve a modern manhwa aesthetic with clear outlines. Use a dreamy, romantic palette of saturated yet soft pastel tones\nThe final image must be generated in the exact same aspect ratio as the original source image. Do not add any speech bubbles or text overlays.";
+
+const WEBTOON_BUBBLE_OPTIONS = [
+  "We're Getting Married",
+  "All of my love, all for you",
+  "Forever, I'll love you",
+  "Please Bless Us",
+  "You're Invited",
+];
+
+const WEBTOON_BUBBLE_PROMPT = "Position the speech bubble in an open area where it does not cover the bride or groom's face. The speech bubble should not extend across the full width of the image. Leave clear, visible empty space on both the left and right sides of the speech bubble, creating a balanced and visually pleasing composition. Integrate a decorative speech bubble with the crisp English text '{text}'. Ensure the bubble is positioned to avoid overlapping or obstructing the characters.";
 
 const SERVICE_TYPES = [
   { id: "video-effect", label: "프리미엄서비스1", title: "이미지 → 영상효과" },
@@ -127,6 +152,7 @@ export function PcPremium() {
   const [prompt, setPrompt] = useState<string | null>(null);
   const [selectedServiceType, setSelectedServiceType] = useState<string>("video-effect");
   const [customPrompt, setCustomPrompt] = useState<string>(WATERCOLOR_ILLUSTRATION_DEFAULT_PROMPT);
+  const [webtoonBubbleText, setWebtoonBubbleText] = useState<string | null>(null);
 
   const [jobId, setJobId] = useState<string | null>(null);
   const [jobPromptId, setJobPromptId] = useState<string | null>(null);
@@ -244,7 +270,11 @@ export function PcPremium() {
     const files = Array.from(e.target.files ?? []);
     const remaining = MAX_PHOTOS - photos.length;
     const urls = files.slice(0, remaining).map((file) => URL.createObjectURL(file));
-    if (urls.length > 0) setPhotos([...photos, ...urls]);
+    if (urls.length > 0) {
+      setPhotos([...photos, ...urls]);
+      // 가장 최근 추가된 사진 자동 선택
+      setSelectedPhoto(photos.length + urls.length - 1);
+    }
     e.target.value = "";
   };
 
@@ -460,7 +490,13 @@ export function PcPremium() {
     const finalPromptText = selectedServiceType === "bg-change"
       ? (BG_CHANGE_OPTIONS.find((o) => o.id === prompt)?.prompt || "")
       : IMAGE_STYLE_SERVICE_IDS.has(selectedServiceType)
-        ? (customPrompt.trim() !== "" ? customPrompt : getDefaultPromptForService(selectedServiceType))
+        ? (() => {
+            const base = customPrompt.trim() !== "" ? customPrompt : getDefaultPromptForService(selectedServiceType);
+            if (selectedServiceType === "webtoon" && webtoonBubbleText) {
+              return base + "\n" + WEBTOON_BUBBLE_PROMPT.replace("{text}", webtoonBubbleText);
+            }
+            return base;
+          })()
         : (PROMPT_OPTIONS.find((p) => p.id === prompt)?.desc || "");
 
     if (!finalPromptText) return;
@@ -483,8 +519,7 @@ export function PcPremium() {
     setJobPromptId(selectedServiceType);
     setGenStartedAt(null);
     setMuxStartedAt(null);
-    setGenStartedAt(Date.now());
-    setNow(Date.now());
+    setNow(null);
 
     try {
       const supabase = createClient();
@@ -502,6 +537,9 @@ export function PcPremium() {
       const [resizedPath] = await uploadInvitationPhotos(savedInvitationId, user.id, [resizedBlobUrl]);
       URL.revokeObjectURL(resizedBlobUrl);
       setUploading(false);
+      // 업로드 완료 후 AI 작업 타이머 시작 (업로드 시간은 진행률에서 제외)
+      setGenStartedAt(Date.now());
+      setNow(Date.now());
 
       // 업로드된 원본 사진을 store에도 반영 (blob: → 영구 URL)
       setPhotos(photos.map((p, i) => (i === selectedPhoto ? publicPhotoUrl : p)));
@@ -526,6 +564,7 @@ export function PcPremium() {
         promptId: selectedServiceType,
         promptText: finalPromptText,
         bgImageUrl,
+        bgSeed: selectedBgOption?.seed ?? null,
       });
 
       console.log("[PcPremium] requestPremiumVideo:result", result);
@@ -533,13 +572,9 @@ export function PcPremium() {
       if (result.ok && result.startLogs?.length) result.startLogs.forEach((m: string) => console.log("[EdgeFn:start]", m));
       if (!result.ok) throw new Error(result.error);
 
-      const now = new Date().toISOString();
+      // SSE subscribe 방식: requestPremiumVideo()가 반환되는 시점은 AI 작업 완료 후입니다.
+      // genStartedAt을 재설정하면 진행바가 0으로 리셋되므로, jobId만 설정하고 폴링에 위임합니다.
       setJobId(result.id);
-      setJobPromptId(selectedServiceType);
-      setJobStatus("pending");
-      setJobCreatedAt(now);
-      setGenStartedAt(Date.now());
-      setNow(Date.now());
     } catch (err) {
       console.error("[PcPremium] handleGenerate:error", err);
       setJobStatus("failed");
@@ -558,7 +593,7 @@ export function PcPremium() {
   let remainingSec = 0;
   let overtimeSec = 0;
   const activePromptId = jobPromptId ?? selectedServiceType;
-  const baseEstimateSec = IMAGE_STYLE_SERVICE_IDS.has(activePromptId) ? ESTIMATE_IMAGE_STYLE_SEC : ESTIMATE_VIDEO_SEC;
+  const baseEstimateSec = ESTIMATE_SEC[activePromptId] ?? 60;
   
   if (jobStatus === "done") {
     progressPercent = 100;
@@ -638,13 +673,22 @@ export function PcPremium() {
               <div className="premium-photo-grid">
                 {photos.map((src, i) =>
                   isVideoUrl(src) ? null : (
-                    <label key={i} className="premium-photo-item">
-                      <div className="premium-photo-thumb" style={{ backgroundImage: `url('${src}')` }}>
+                    <div key={i} className="premium-photo-item">
+                      <div
+                        className="premium-photo-thumb"
+                        style={{ backgroundImage: `url('${src}')`, cursor: "pointer" }}
+                        onClick={() => setSelectedPhoto(i)}
+                      >
+                        {selectedPhoto === i && (
+                          <div style={{
+                            position: "absolute", inset: 0, borderRadius: "10px",
+                            border: "2px solid #d8b878", pointerEvents: "none",
+                          }} />
+                        )}
                         <button
                           type="button"
                           className="remove-btn"
                           onClick={(e) => {
-                            e.preventDefault();
                             e.stopPropagation();
                             removePhoto(i);
                           }}
@@ -662,7 +706,7 @@ export function PcPremium() {
                         />
                         선택
                       </span>
-                    </label>
+                    </div>
                   ),
                 )}
                 <label
@@ -739,6 +783,7 @@ export function PcPremium() {
                       onChange={() => {
                         setSelectedServiceType(service.id);
                         setPrompt(null);
+                        setWebtoonBubbleText(null);
                       }}
                     />
                     <div>
@@ -811,9 +856,42 @@ export function PcPremium() {
                   4. {SERVICE_TYPES.find((s) => s.id === selectedServiceType)?.label}{" "}
                   {SERVICE_TYPES.find((s) => s.id === selectedServiceType)?.title} (선택)
                 </div>
-                <p className="premium-flow-hint">
-                  프롬프트를 입력하지 않으면 기본 프롬프트가 사용됩니다.
-                </p>
+
+                {selectedServiceType === "webtoon" && (
+                  <>
+                    <p className="premium-flow-hint">웹툰 이미지에 들어갈 말풍선 문구를 선택해주세요.</p>
+                    <div className="premium-prompt-list">
+                      <label className={`premium-prompt-item${webtoonBubbleText === null ? " active" : ""}`}>
+                        <input
+                          type="radio"
+                          name="webtoon-bubble"
+                          checked={webtoonBubbleText === null}
+                          onChange={() => setWebtoonBubbleText(null)}
+                        />
+                        <div className="premium-prompt-label">선택 안함</div>
+                      </label>
+                      {WEBTOON_BUBBLE_OPTIONS.map((text) => (
+                        <label key={text} className={`premium-prompt-item${webtoonBubbleText === text ? " active" : ""}`}>
+                          <input
+                            type="radio"
+                            name="webtoon-bubble"
+                            checked={webtoonBubbleText === text}
+                            onChange={() => setWebtoonBubbleText(text)}
+                          />
+                          <div className="premium-prompt-label">{text}</div>
+                        </label>
+                      ))}
+                    </div>
+                    <p className="premium-flow-hint" style={{ marginTop: "16px" }}>프롬프트 수정 (선택사항)</p>
+                  </>
+                )}
+
+                {selectedServiceType !== "webtoon" && (
+                  <p className="premium-flow-hint">
+                    프롬프트를 입력하지 않으면 기본 프롬프트가 사용됩니다.
+                  </p>
+                )}
+
                 <textarea
                   value={customPrompt}
                   onChange={(e) => setCustomPrompt(e.target.value)}
@@ -837,6 +915,12 @@ export function PcPremium() {
             {uploading && (
               <div className="premium-job-status">
                 <p>사진을 업로드 하고 있습니다…</p>
+                <div className="premium-progress">
+                  <div className="premium-progress-bar">
+                    <div className="premium-progress-fill" style={{ width: "100%", opacity: 0.4, transition: "none" }} />
+                  </div>
+                  <span className="premium-progress-time">업로드 중…</span>
+                </div>
               </div>
             )}
 

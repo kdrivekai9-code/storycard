@@ -33,7 +33,37 @@ const CTC_PRESETS = [
   { hex: "#ffffff", label: "화이트" },
   { hex: "#f5ede0", label: "크림" },
   { hex: "#1a1a1a", label: "차콜" },
-  { hex: "#d4a860", label: "골드" },
+  { hex: "#111111", label: "블랙" },
+];
+
+const COVER_FONT_OPTIONS = [
+  { value: "pretendard",       label: "Pretendard" },
+  { value: "noto-sans-kr",     label: "Noto Sans KR" },
+  { value: "noto-serif-kr",    label: "Noto Serif KR" },
+  { value: "nanum-gothic",     label: "나눔고딕" },
+  { value: "nanum-myeongjo",   label: "나눔명조" },
+  { value: "black-han-sans",   label: "검은고딕" },
+  { value: "jua",              label: "주아체" },
+  { value: "cormorant",        label: "Cormorant" },
+  { value: "playfair",         label: "Playfair" },
+  { value: "lora",             label: "Lora" },
+];
+
+const COVER_COLOR_OPTIONS = [
+  { value: "#ffffff", label: "White" },
+  { value: "#fdf6ec", label: "Cream" },
+  { value: "#4a4a4a", label: "Charcoal" },
+  { value: "#111111", label: "Black" },
+  { value: "#9e9e9e", label: "Gray" },
+  { value: "#3b6ea5", label: "Blue" },
+];
+
+const COVER_BG_OPTIONS = [
+  { value: "#ffffff", label: "White" },
+  { value: "#9e9e9e", label: "Gray" },
+  { value: "#e07c3a", label: "Orange" },
+  { value: "#7b5ea7", label: "Purple" },
+  { value: "#4a8c5c", label: "Green" },
 ];
 
 const TONE_OPTIONS: { id: ToneId; label: string }[] = [
@@ -341,8 +371,13 @@ export function PcLiveEditor({
     const rect = e.currentTarget.getBoundingClientRect();
     const x = Math.min(Math.max(e.clientX - rect.left, 0), rect.width);
     const pct = x / rect.width;
-    const hue = Math.round(pct * 360);
-    const color = `hsl(${hue}, 75%, 87%)`;
+    const hue = Math.round(pct * 300); // 0(빨강) ~ 300(보라) 이후 그레이 구간
+    // 바 끝부분(75%~100%)은 보라→그레이 전환
+    const isGrayZone = pct >= 0.75;
+    const grayPct = isGrayZone ? (pct - 0.75) / 0.25 : 0; // 0~1
+    const sat = isGrayZone ? Math.round(20 * (1 - grayPct)) : (hue >= 100 && hue <= 200 ? 80 : 88);
+    const lit = isGrayZone ? Math.round(55 - 5 * grayPct) : (hue >= 100 && hue <= 200 ? 38 : 52);
+    const color = `hsl(${isGrayZone ? 270 : hue}, ${sat}%, ${lit}%)`;
     setGradientDot({ left: `${pct * 100}%`, color });
     setAnswer("coverTextColor", color);
   };
@@ -612,6 +647,81 @@ export function PcLiveEditor({
           </div>
         </div>
 
+        {/* Q3 표지 텍스트 폰트/배경 */}
+        <div className="group">
+          <div className="group-label">Q3-2 · 표지 텍스트 스타일</div>
+          <div className="lettering-controls" style={{ marginTop: 6 }}>
+            {/* 폰트 / 사이즈 / 컬러 */}
+            <div className="lettering-row">
+              <select
+                className="lettering-select"
+                style={{ flex: 2 }}
+                value={answers.coverTextFont ?? "pretendard"}
+                onChange={(e) => setAnswer("coverTextFont", e.target.value)}
+              >
+                {COVER_FONT_OPTIONS.map((f) => (
+                  <option key={f.value} value={f.value}>{f.label}</option>
+                ))}
+              </select>
+              <select
+                className="lettering-select"
+                style={{ flex: 1 }}
+                value={answers.coverTextSize ?? 0}
+                onChange={(e) => setAnswer("coverTextSize", Number(e.target.value))}
+              >
+                {[3, 2, 1, 0, -1, -2, -3].map((v) => (
+                  <option key={v} value={v}>{v > 0 ? `+${v}` : v}</option>
+                ))}
+              </select>
+              <div className="lettering-color-wrapper" style={{ flex: 1 }}>
+                <span
+                  className="lettering-color-dot"
+                  style={{ background: answers.coverTextColor ?? "#ffffff" }}
+                />
+                <select
+                  className="lettering-select lettering-color-select"
+                  style={{ width: "100%" }}
+                  value={answers.coverTextColor ?? "#ffffff"}
+                  onChange={(e) => setAnswer("coverTextColor", e.target.value)}
+                >
+                  {COVER_COLOR_OPTIONS.map((c) => (
+                    <option key={c.value} value={c.value}>{c.label}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            {/* 배경색 / 투명도 */}
+            <div className="lettering-row">
+              <div className="lettering-color-wrapper" style={{ flex: 2 }}>
+                <span
+                  className="lettering-color-dot"
+                  style={{ background: answers.coverTextBgColor ?? "#ffffff" }}
+                />
+                <select
+                  className="lettering-select lettering-color-select"
+                  style={{ width: "100%" }}
+                  value={answers.coverTextBgColor ?? "#ffffff"}
+                  onChange={(e) => setAnswer("coverTextBgColor", e.target.value)}
+                >
+                  {COVER_BG_OPTIONS.map((c) => (
+                    <option key={c.value} value={c.value}>{c.label}</option>
+                  ))}
+                </select>
+              </div>
+              <select
+                className="lettering-select"
+                style={{ flex: 1 }}
+                value={answers.coverTextBgOpacity ?? 0}
+                onChange={(e) => setAnswer("coverTextBgOpacity", Number(e.target.value))}
+              >
+                {Array.from({ length: 11 }, (_, i) => i * 10).map((v) => (
+                  <option key={v} value={v}>{v}%</option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </div>
+
         {/* Q7 말투 */}
         <div className="group">
           <div className="group-label">Q4 · 인사말 말투</div>
@@ -644,14 +754,83 @@ export function PcLiveEditor({
               </button>
             ))}
             {activeMotion === "lettering" && (
-              <input
-                type="text"
-                className="lettering-input"
-                value={answers.letteringText ?? "Our wedding day"}
-                onChange={(e) => setAnswer("letteringText", e.target.value)}
-                placeholder="Our wedding day"
-                maxLength={40}
-              />
+              <div className="lettering-controls">
+                <div className="lettering-row">
+                  <input
+                    type="text"
+                    className="lettering-input"
+                    style={{ flex: 1 }}
+                    value={answers.letteringText ?? ""}
+                    onChange={(e) => setAnswer("letteringText", e.target.value)}
+                    placeholder="글자를 입력하시거나 오른쪽 선택을 해주세요"
+                    maxLength={60}
+                  />
+                  <select
+                    className="lettering-select"
+                    style={{ flex: 1 }}
+                    value=""
+                    onChange={(e) => { if (e.target.value) setAnswer("letteringText", e.target.value); }}
+                  >
+                    <option value="" disabled>▾ 선택</option>
+                    <option value="We're Getting Married">We're Getting Married</option>
+                    <option value="All of my love, all for you">All of my love, all for you</option>
+                    <option value="Forever, I'll love you">Forever, I'll love you</option>
+                    <option value="Please Bless Us">Please Bless Us</option>
+                    <option value="You're Invited">You're Invited</option>
+                  </select>
+                </div>
+                <div className="lettering-row">
+                  <select
+                    className="lettering-select"
+                    style={{ flex: 1 }}
+                    value={answers.letteringFont ?? "great-vibes"}
+                    onChange={(e) => setAnswer("letteringFont", e.target.value)}
+                  >
+                    <option value="great-vibes">Great Vibes</option>
+                    <option value="cormorant">Cormorant</option>
+                    <option value="dancing">Dancing Script</option>
+                    <option value="pinyon">Pinyon Script</option>
+                    <option value="parisienne">Parisienne</option>
+                    <option value="nanum-pen">나눔 펜</option>
+                    <option value="gaegu">개구체</option>
+                    <option value="gamja">감자꽃</option>
+                    <option value="gowun">고운 바탕</option>
+                  </select>
+                  <select
+                    className="lettering-select"
+                    style={{ flex: 1 }}
+                    value={answers.letteringSize ?? 18}
+                    onChange={(e) => setAnswer("letteringSize", Number(e.target.value))}
+                  >
+                    <option value={12}>12</option>
+                    <option value={14}>14</option>
+                    <option value={16}>16</option>
+                    <option value={18}>18</option>
+                    <option value={20}>20</option>
+                    <option value={24}>24</option>
+                    <option value={28}>28</option>
+                  </select>
+                  <div className="lettering-color-wrapper" style={{ flex: 1 }}>
+                    <span
+                      className="lettering-color-dot"
+                      style={{ background: answers.letteringColor ?? "#ffffff" }}
+                    />
+                    <select
+                      className="lettering-select lettering-color-select"
+                      style={{ width: "100%" }}
+                      value={answers.letteringColor ?? "#ffffff"}
+                      onChange={(e) => setAnswer("letteringColor", e.target.value)}
+                    >
+                      <option value="#ffffff">White</option>
+                      <option value="#fdf6ec">Cream</option>
+                      <option value="#4a4a4a">Charcoal</option>
+                      <option value="#111111">Black</option>
+                      <option value="#9e9e9e">Gray</option>
+                      <option value="#3b6ea5">Blue</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
             )}
           </div>
         </div>

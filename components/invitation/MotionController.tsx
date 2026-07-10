@@ -2,12 +2,30 @@
 import { useEffect, useRef } from "react";
 import type { MotionId } from "@/lib/invitation/types";
 
+const LETTERING_FONT_MAP: Record<string, string> = {
+  cormorant:     "var(--font-cormorant), serif",
+  dancing:       "var(--font-dancing), cursive",
+  "great-vibes": "var(--font-great-vibes), cursive",
+  pinyon:        "var(--font-pinyon), cursive",
+  parisienne:    "var(--font-parisienne), cursive",
+  "nanum-pen":   "var(--font-nanum-pen), cursive",
+  gaegu:         "var(--font-gaegu), cursive",
+  gamja:         "var(--font-gamja), cursive",
+  gowun:         "var(--font-gowun), serif",
+};
+
 export function MotionController({
   motion,
   letteringText,
+  letteringFont,
+  letteringSize,
+  letteringColor,
 }: {
   motion: MotionId;
   letteringText?: string;
+  letteringFont?: string;
+  letteringSize?: number;
+  letteringColor?: string;
 }) {
   const anchorRef = useRef<HTMLSpanElement>(null);
 
@@ -106,7 +124,7 @@ export function MotionController({
         };
 
         const spawnFloater = () => {
-          const angle = Math.random() * Math.PI * 2, spd = Math.random() * 1.0 + 0.6;
+          const angle = Math.random() * Math.PI * 2, spd = Math.random() * 0.4 + 0.25;
           floaters.push({ x: Math.random() * W, y: Math.random() * H, vx: Math.cos(angle) * spd, vy: Math.sin(angle) * spd, size: Math.random() * 1 + 1.5, hue: HUES[Math.floor(Math.random() * HUES.length)], phase: Math.random() * Math.PI * 2, age: 0, trail: [] });
         };
 
@@ -114,22 +132,22 @@ export function MotionController({
           const hue = HUES[Math.floor(Math.random() * HUES.length)];
           bursts.push({ x, y, vx: 0, vy: 0, size: 52, life: 1, decay: 0.055, hue, glow: true });
           bursts.push({ x, y, vx: 0, vy: 0, size: 30, life: 1, decay: 0.07, hue: (hue + 40) % 360, glow: true });
-          for (let i = 0; i < 3; i++) {
-            const a = (i / 3) * Math.PI * 2, spd = Math.random() * 1.8 + 1;
+          for (let i = 0; i < 2; i++) {
+            const a = (i / 2) * Math.PI * 2, spd = Math.random() * 1.2 + 0.7;
             bursts.push({ x, y, vx: Math.cos(a) * spd, vy: Math.sin(a) * spd - Math.random() * 0.8, size: Math.random() * 1.2 + 1.2, life: 1, decay: Math.random() * 0.022 + 0.016, hue: hue + Math.random() * 40 - 20, star: true });
           }
-          for (let i = 0; i < 12; i++) {
-            const a = Math.random() * Math.PI * 2, spd = Math.random() * 2.5 + 1.3;
+          for (let i = 0; i < 7; i++) {
+            const a = Math.random() * Math.PI * 2, spd = Math.random() * 1.5 + 0.8;
             bursts.push({ x, y, vx: Math.cos(a) * spd, vy: Math.sin(a) * spd - 0.5, size: Math.random() * 3 + 1.5, life: 1, decay: Math.random() * 0.03 + 0.02, hue: hue + Math.random() * 60 - 30, star: false });
           }
         };
 
-        for (let i = 0; i < 5; i++) spawnFloater();
+        for (let i = 0; i < 3; i++) spawnFloater();
         burstInterval = setInterval(() => {
           if (!document.getElementById("petalCanvas")) { clearInterval(burstInterval!); return; }
           explode(Math.random() * W * 0.75 + W * 0.12, Math.random() * H * 0.7 + H * 0.08);
-          if (floaters.length < 6) spawnFloater();
-        }, 1000);
+          if (floaters.length < 4) spawnFloater();
+        }, 1800);
         setTimeout(() => explode(W / 2, H * 0.35), 300);
 
         const tick = () => {
@@ -430,11 +448,11 @@ export function MotionController({
           textAlign: "center",
           zIndex: "6",
           pointerEvents: "none",
-          fontFamily: "var(--font-cormorant), serif",
+          fontFamily: LETTERING_FONT_MAP[letteringFont ?? "cormorant"] ?? LETTERING_FONT_MAP["cormorant"],
           fontWeight: "500",
-          fontSize: "16px",
+          fontSize: `${letteringSize ?? 16}px`,
           letterSpacing: "0.22em",
-          color: "var(--ctc, #fff)",
+          color: letteringColor ?? "#ffffff",
           textShadow: "0 1px 6px rgba(0,0,0,0.25)",
         });
         cover.appendChild(el);
@@ -489,7 +507,7 @@ export function MotionController({
       stopCanvas();
       stopLettering();
     };
-  }, [motion, letteringText]);
+  }, [motion, letteringText, letteringFont, letteringSize, letteringColor]);
 
   return <span ref={anchorRef} style={{ display: "none" }} aria-hidden />;
 }

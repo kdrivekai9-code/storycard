@@ -97,6 +97,22 @@ export async function syncInvitationPhotos(invitationId: string, storagePaths: s
     return { ok: false as const, error: "not_authenticated" as const };
   }
 
+  // 교체 전 기존 경로 조회
+  const { data: existing } = await supabase
+    .from("invitation_photos")
+    .select("storage_path")
+    .eq("invitation_id", invitationId);
+
+  // 새 목록에 없는 경로만 스토리지에서 삭제 (외부 URL — fal.ai 영상 등 — 은 제외)
+  const newPathSet = new Set(storagePaths);
+  const toDelete = (existing ?? [])
+    .map((r) => r.storage_path as string)
+    .filter((p) => !newPathSet.has(p) && !p.startsWith("http"));
+
+  if (toDelete.length > 0) {
+    await supabase.storage.from("invitation-photos").remove(toDelete);
+  }
+
   await supabase.from("invitation_photos").delete().eq("invitation_id", invitationId);
 
   if (storagePaths.length > 0) {

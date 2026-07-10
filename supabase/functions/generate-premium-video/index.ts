@@ -214,12 +214,12 @@ function buildWebtoonInput(imageUrl: string, prompt: string): Record<string, unk
 }
 
 // 서비스4: 배경이미지 변경
-function buildBgChangeInput(imageUrl: string, bgImageUrl: string | null, prompt: string): Record<string, unknown> {
+function buildBgChangeInput(imageUrl: string, bgImageUrl: string | null, prompt: string, seed: number): Record<string, unknown> {
   return {
     prompt,
     image_urls: bgImageUrl ? [imageUrl, bgImageUrl] : [imageUrl],
     resolution: "2K",
-    seed: 6222409,
+    seed,
     output_format: "png",
     aspect_ratio: "9:16",
   };
@@ -251,7 +251,7 @@ Deno.serve(async (req) => {
     const { data: { user } } = await supabase.auth.getUser(authHeader.replace("Bearer ", ""));
     if (!user) return J({ error: "인증이 필요합니다." }, 401);
 
-    const { action, premiumVideoId, bgImageUrl } = await req.json();
+    const { action, premiumVideoId, bgImageUrl, bgSeed } = await req.json();
     if (!premiumVideoId) return J({ error: "premiumVideoId가 필요합니다." }, 400);
 
     const { data: job, error: jobError } = await supabase
@@ -297,7 +297,7 @@ Deno.serve(async (req) => {
           model = NANO_BANANA_MODEL;
           const uploadedBgUrl = bgImageUrl ? await falUploadImage(bgImageUrl) : null;
           if (uploadedBgUrl) log("[start] bg sample image uploaded:", uploadedBgUrl);
-          input = buildBgChangeInput(imageUrl, uploadedBgUrl, job.prompt_text);
+          input = buildBgChangeInput(imageUrl, uploadedBgUrl, job.prompt_text, typeof bgSeed === "number" ? bgSeed : 6222409);
           timeoutMs = 90_000;
         } else {
           // video-effect

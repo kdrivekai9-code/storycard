@@ -8,6 +8,18 @@
   --background: #ffffff;
   --foreground: #171717;
 
+  /* 한국어 Google Fonts CSS 변수 (CDN 로딩, 한글 전체 포함) */
+  --font-noto-sans-kr: 'Noto Sans KR';
+  --font-noto-serif-kr: 'Noto Serif KR';
+  --font-nanum-gothic: 'Nanum Gothic';
+  --font-nanum-myeongjo: 'Nanum Myeongjo';
+  --font-black-han-sans: 'Black Han Sans';
+  --font-jua: 'Jua';
+  --font-nanum-pen: 'Nanum Pen Script';
+  --font-gaegu: 'Gaegu';
+  --font-gamja: 'Gamja Flower';
+  --font-gowun: 'Gowun Batang';
+
   --bg-stage: #ece8e2;
   --bg: #ffffff;
   --bg-soft: #fafaf7;
@@ -207,7 +219,7 @@ body {
   font-weight: 700;
   letter-spacing: 0.14em;
   margin-top: 0;
-  color: #000 !important;
+  color: var(--ctc, #333) !important;
 }
 .inv-cover.cover-full .date-time-group {
   display: flex;
@@ -221,7 +233,7 @@ body {
   font-weight: 600;
   letter-spacing: 0.03em;
   margin-top: 0;
-  color: #000 !important;
+  color: var(--ctc, #333) !important;
 }
 .inv-cover.cover-full .scroll-hint,
 .inv-cover.cover-full .scroll-arrow {
@@ -420,7 +432,7 @@ body {
 .inv-cover.cover-mosaic .cover-inner .date,
 .inv-cover.cover-mosaic .cover-inner .time,
 .inv-cover.cover-mosaic .cover-inner .venue {
-  color: #1a1a1a !important;
+  color: var(--ctc, #333) !important;
   font-weight: 700;
   text-shadow: none;
 }
@@ -634,6 +646,44 @@ body {
   margin: 0;
 }
 
+/* 표지 커버 텍스트 폰트/배경 오버라이드 */
+.inv-cover .cover-inner {
+  background: var(--cover-inner-bg, transparent) !important;
+}
+
+/* 폰트 패밀리 — 모든 텍스트 요소 */
+.inv-cover .cover-inner .micro,
+.inv-cover .cover-inner .names,
+.inv-cover .cover-inner .names span,
+.inv-cover .cover-inner .ko,
+.inv-cover .cover-inner .ko span,
+.inv-cover .cover-inner .date,
+.inv-cover .cover-inner .time,
+.inv-cover .cover-inner .venue,
+.inv-cover .cover-inner .scroll-hint {
+  font-family: var(--cover-font, inherit) !important;
+}
+
+/* 폰트 사이즈 오프셋 — 공통 기본값 (단계당 2px) */
+.inv-cover .cover-inner .micro      { font-size: calc(10px + var(--cover-font-size, 0) * 2px) !important; }
+.inv-cover .cover-inner .names      { font-size: calc(58px + var(--cover-font-size, 0) * 2px) !important; }
+.inv-cover .cover-inner .names .amp { font-size: calc(40px + var(--cover-font-size, 0) * 2px) !important; }
+.inv-cover .cover-inner .ko         { font-size: calc(15px + var(--cover-font-size, 0) * 2px) !important; }
+.inv-cover .cover-inner .date       { font-size: calc(13px + var(--cover-font-size, 0) * 2px) !important; }
+.inv-cover .cover-inner .time       { font-size: calc(13px + var(--cover-font-size, 0) * 2px) !important; }
+.inv-cover .cover-inner .venue      { font-size: calc(12px + var(--cover-font-size, 0) * 2px) !important; }
+
+/* 폰트 사이즈 오프셋 — 레이아웃별 기본값 보정 */
+.inv-cover.cover-frame   .cover-inner .names { font-size: calc(38px + var(--cover-font-size, 0) * 2px) !important; }
+.inv-cover.cover-overlay .cover-inner .names { font-size: calc(42px + var(--cover-font-size, 0) * 2px) !important; }
+.inv-cover.cover-overlay .cover-inner .micro { font-size: calc(11px + var(--cover-font-size, 0) * 2px) !important; }
+.inv-cover.cover-overlay .cover-inner .ko    { font-size: calc(20px + var(--cover-font-size, 0) * 2px) !important; }
+.inv-cover.cover-full    .cover-inner .ko    { font-size: calc(14px + var(--cover-font-size, 0) * 2px) !important; }
+.inv-cover.cover-full    .cover-inner .date,
+.inv-cover.cover-full    .cover-inner .time  { font-size: calc(12px + var(--cover-font-size, 0) * 2px) !important; }
+.inv-cover.cover-mosaic  .cover-inner .date,
+.inv-cover.cover-mosaic  .cover-inner .time  { font-size: calc(11px + var(--cover-font-size, 0) * 2px) !important; }
+
 /* 표지 텍스트 컬러 오버라이드 (--ctc 변수, PC LIVE EDITOR Q4) */
 .inv-cover .cover-inner .names,
 .inv-cover .cover-inner .names .amp,
@@ -643,7 +693,7 @@ body {
 .inv-cover .cover-inner .time,
 .inv-cover .cover-inner .venue,
 .inv-cover .cover-inner .scroll-hint {
-  color: var(--ctc, inherit) !important;
+  color: var(--ctc, #333) !important;
 }
 .inv-cover .cover-inner .ornament {
   background: var(--ctc, var(--accent)) !important;
@@ -1777,16 +1827,48 @@ body {
   border: 1px solid rgba(0, 0, 0, 0.06);
 }
 .pc-live .chip-btn.active .swatch { border-color: rgba(255, 255, 255, 0.3); }
-.lettering-input {
-  flex: 1 1 160px;
-  min-width: 160px;
-  padding: 8px 14px;
+.lettering-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  margin-top: 10px;
+}
+.lettering-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+}
+.lettering-input,
+.lettering-select {
+  box-sizing: border-box;
+  height: 34px;
+  padding: 0 12px;
   border-radius: 999px;
   border: 1px solid var(--accent-deep);
   background: #fff;
   font: inherit; font-size: 12px; color: var(--ink);
+  line-height: 34px;
 }
-.lettering-input:focus { outline: none; border-color: var(--ink); }
+.lettering-input { min-width: 0; }
+.lettering-input:focus,
+.lettering-select:focus { outline: none; border-color: var(--ink); }
+.lettering-select { flex: 0 0 auto; cursor: pointer; appearance: auto; }
+.lettering-color-wrapper { position: relative; display: flex; align-items: center; }
+.lettering-color-dot {
+  position: absolute;
+  left: 10px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1px solid rgba(0,0,0,0.18);
+  pointer-events: none;
+  z-index: 1;
+  flex-shrink: 0;
+}
+.lettering-color-select { padding-left: 28px !important; }
 
 /* ── 미니 커버 카드 선택 UI (Q3) ── */
 .cover-card-grid {
@@ -2011,9 +2093,15 @@ body {
 .ccp-gradient-bar {
   position: absolute; inset: 0;
   background: linear-gradient(to right,
-    hsl(0, 75%, 87%), hsl(30, 78%, 87%), hsl(55, 78%, 87%),
-    hsl(120, 65%, 85%), hsl(190, 70%, 85%), hsl(240, 65%, 87%),
-    hsl(280, 70%, 87%), hsl(330, 75%, 87%)
+    hsl(0, 90%, 52%),
+    hsl(30, 95%, 50%),
+    hsl(60, 95%, 48%),
+    hsl(120, 80%, 38%),
+    hsl(180, 80%, 38%),
+    hsl(240, 80%, 58%),
+    hsl(270, 80%, 55%),
+    hsl(270, 20%, 55%),
+    hsl(0, 0%, 50%)
   );
 }
 .ccp-dropper {
@@ -2829,6 +2917,7 @@ body {
 .admin-form input,
 .admin-form select,
 .admin-form textarea {
+  width: 100%;
   height: 40px;
   border-radius: 8px;
   border: 1px solid var(--line);
@@ -2836,6 +2925,7 @@ body {
   font-size: 13px;
   color: var(--ink);
   background: #fff;
+  box-sizing: border-box;
 }
 .admin-form textarea {
   height: auto;
@@ -2850,6 +2940,9 @@ body {
   display: grid;
   gap: 14px;
   max-width: 560px;
+}
+.admin-form.admin-form--wide {
+  max-width: 660px;
 }
 .admin-form label {
   display: block;

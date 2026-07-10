@@ -65,7 +65,14 @@ export interface StyleAnswers {
   motion?: MotionId; // Q6
   tone?: ToneId; // Q7
   coverTextColor?: string; // PC LIVE EDITOR Q4 · 표지 텍스트 컬러
+  coverTextFont?: string;  // 표지 텍스트 폰트 ID
+  coverTextSize?: number;  // 표지 텍스트 폰트 사이즈 (px)
+  coverTextBgColor?: string;   // 표지 텍스트 배경색 (hex)
+  coverTextBgOpacity?: number; // 표지 텍스트 배경 투명도 (0-100)
   letteringText?: string; // 움직임="레터링" 선택 시 표지 상단에 타이핑되는 문구
+  letteringFont?: string; // 레터링 폰트 ID (cormorant | dancing | great-vibes | pinyon | parisienne)
+  letteringSize?: number; // 레터링 폰트 사이즈 (px)
+  letteringColor?: string; // 레터링 텍스트 컬러 (hex)
 }
 
 /** 분위기/색감이 결정하는 색상 토큰 */
@@ -91,7 +98,14 @@ export interface InvitationConfig {
   motion: MotionId;
   tone: ToneId;
   coverTextColor?: string;
+  coverTextFont?: string;
+  coverTextSize?: number;
+  coverTextBgColor?: string;
+  coverTextBgOpacity?: number;
   letteringText?: string;
+  letteringFont?: string;
+  letteringSize?: number;
+  letteringColor?: string;
   theme: ThemeTokens;
   greeting: string;
 }

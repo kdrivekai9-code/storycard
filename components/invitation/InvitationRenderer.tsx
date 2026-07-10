@@ -44,8 +44,17 @@ export function InvitationRenderer({
         } as React.CSSProperties
       }
     >
-      <MotionController motion={motion} letteringText={config.letteringText} />
-      <CoverSection bound={bound} cover={config.cover} coverTextColor={config.coverTextColor} photos={photos} />
+      <MotionController motion={motion} letteringText={config.letteringText} letteringFont={config.letteringFont} letteringSize={config.letteringSize} letteringColor={config.letteringColor} />
+      <CoverSection
+        bound={bound}
+        cover={config.cover}
+        coverTextColor={config.coverTextColor}
+        coverTextFont={config.coverTextFont}
+        coverTextSize={config.coverTextSize}
+        coverTextBgColor={config.coverTextBgColor}
+        coverTextBgOpacity={config.coverTextBgOpacity}
+        photos={photos}
+      />
 
       {sections.includes("greeting") && <GreetingSection bound={bound} />}
       <FamilySection bound={bound} />

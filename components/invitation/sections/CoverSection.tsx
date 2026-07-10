@@ -8,6 +8,27 @@ import { useInvitationStore } from "@/store/invitationStore";
 type SlideState = { active: number; display: number; fading: boolean };
 const INITIAL: SlideState = { active: 0, display: 0, fading: false };
 
+const COVER_FONT_MAP: Record<string, string> = {
+  pretendard:        "'Pretendard', sans-serif",
+  "noto-sans-kr":    "'Noto Sans KR', sans-serif",
+  "noto-serif-kr":   "'Noto Serif KR', serif",
+  "nanum-gothic":    "'Nanum Gothic', sans-serif",
+  "nanum-myeongjo":  "'Nanum Myeongjo', serif",
+  "black-han-sans":  "'Black Han Sans', sans-serif",
+  jua:               "'Jua', sans-serif",
+  cormorant:         "var(--font-cormorant), serif",
+  playfair:          "var(--font-playfair), serif",
+  lora:              "var(--font-lora), serif",
+};
+
+function hexToRgb(hex: string): string {
+  const h = hex.replace("#", "");
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return `${r},${g},${b}`;
+}
+
 /** 영상으로 제작한 원본 사진 자리는 사진 대신 영상으로 표시 */
 function Media({
   className,
@@ -42,11 +63,19 @@ export function CoverSection({
   bound,
   cover,
   coverTextColor,
+  coverTextFont,
+  coverTextSize,
+  coverTextBgColor,
+  coverTextBgOpacity,
   photos: photosProp,
 }: {
   bound: BoundInvitationData;
   cover: CoverType;
   coverTextColor?: string;
+  coverTextFont?: string;
+  coverTextSize?: number;
+  coverTextBgColor?: string;
+  coverTextBgOpacity?: number;
   /** 지정 시 전역 스토어 대신 이 사진 목록을 사용 (독립 렌더링용 — 샘플 미리보기 등) */
   photos?: string[];
 }) {
@@ -109,10 +138,20 @@ export function CoverSection({
   const mosaicSrc = (offset: number): string | undefined =>
     photos.length === 0 ? undefined : photos[(slide.display + offset) % photos.length];
 
+  const bgOpacity = (coverTextBgOpacity ?? 0) / 100;
+  const bgRgba = bgOpacity > 0
+    ? `rgba(${hexToRgb(coverTextBgColor ?? "#ffffff")}, ${bgOpacity})`
+    : "transparent";
+
   return (
     <div
       className={`inv-cover cover-${cover}`}
-      style={coverTextColor ? ({ "--ctc": coverTextColor } as React.CSSProperties) : undefined}
+      style={{
+        ...(coverTextColor ? { "--ctc": coverTextColor } : {}),
+        "--cover-font": COVER_FONT_MAP[coverTextFont ?? "pretendard"] ?? COVER_FONT_MAP.pretendard,
+        "--cover-font-size": String(coverTextSize ?? 0),
+        "--cover-inner-bg": bgRgba,
+      } as React.CSSProperties}
     >
       {/* ① 풀블리드 / ⑤ 중앙오버레이 — 슬라이드 레이어 */}
       {(cover === "full" || cover === "overlay") && (
