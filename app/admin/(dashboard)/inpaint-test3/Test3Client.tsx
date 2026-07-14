@@ -395,10 +395,23 @@ export function Test3Client() {
           {/* 직접 업로드 */}
           {textureMaskMethod === "upload" && (
             <div style={{ marginBottom: 16 }}>
-              <label htmlFor="textureMask_input" style={{ display: "inline-block", padding: "8px 16px", borderRadius: 8, border: "1px solid var(--line)", cursor: "pointer", fontSize: 12 }}>
-                질감 마스크 파일 선택 (PNG 권장)
-              </label>
-              <input id="textureMask_input" type="file" accept="image/*" disabled={loading} style={{ display: "none" }} onChange={handleTextureMaskUpload} />
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 14, alignItems: "start" }}>
+                <div>
+                  <div style={{ fontSize: 12, color: "var(--ink-soft)", marginBottom: 6 }}>원본 이미지 A (참조용)</div>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={imageAPreview!} alt="A" style={{ width: "100%", display: "block", borderRadius: 8, border: "1px solid var(--line)" }} />
+                </div>
+                <div>
+                  <div style={{ fontSize: 12, color: "var(--ink-soft)", marginBottom: 6 }}>질감 마스크 업로드</div>
+                  <div style={{ fontSize: 11, color: "var(--ink-faint)", marginBottom: 10, lineHeight: 1.6 }}>
+                    포토샵/Photopea 등에서 이마·볼·팔자 주름 영역만 <strong>흰색</strong>으로, 눈·코·입은 <strong>검정</strong>으로 칠한 PNG를 업로드하세요.
+                  </div>
+                  <label htmlFor="textureMask_input" style={{ display: "inline-block", padding: "8px 16px", borderRadius: 8, border: "1px solid var(--line)", cursor: "pointer", fontSize: 12 }}>
+                    마스크 파일 선택 (PNG 권장)
+                  </label>
+                  <input id="textureMask_input" type="file" accept="image/*" disabled={loading} style={{ display: "none" }} onChange={handleTextureMaskUpload} />
+                </div>
+              </div>
             </div>
           )}
 
@@ -427,12 +440,29 @@ export function Test3Client() {
             </div>
           )}
 
-          {/* 마스크 미리보기 */}
-          {textureMaskPreview && (
+          {/* 마스크 미리보기 — SAM2 완료 후 또는 직접업로드 후 원본과 나란히 */}
+          {textureMaskPreview && textureMaskMethod === "sam2" && (
             <div style={{ marginBottom: 20 }}>
-              <div style={{ fontSize: 12, color: "var(--ink-soft)", marginBottom: 6 }}>질감 마스크 미리보기 <span style={{ fontSize: 11, padding: "1px 6px", borderRadius: 4, background: "var(--line)" }}>흰색=질감복원 대상</span></div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, alignItems: "start" }}>
+                <div>
+                  <div style={{ fontSize: 12, color: "var(--ink-soft)", marginBottom: 6 }}>원본 이미지 A</div>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={imageAPreview!} alt="A" style={{ width: "100%", display: "block", borderRadius: 8, border: "1px solid var(--line)" }} />
+                </div>
+                <div>
+                  <div style={{ fontSize: 12, color: "var(--ink-soft)", marginBottom: 6 }}>질감 마스크 <span style={{ fontSize: 11, padding: "1px 6px", borderRadius: 4, background: "var(--line)" }}>흰색=복원 대상</span></div>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={textureMaskPreview} alt="질감마스크" style={{ width: "100%", display: "block", borderRadius: 8, border: "1px solid var(--line)", marginBottom: 8 }} />
+                  <a href={textureMaskPreview} download="texture-mask.png" className="admin-btn admin-btn--ghost" style={{ fontSize: 11, display: "inline-block" }}>마스크 저장</a>
+                </div>
+              </div>
+            </div>
+          )}
+          {textureMaskPreview && textureMaskMethod === "upload" && (
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontSize: 12, color: "var(--ink-soft)", marginBottom: 6 }}>업로드된 마스크 미리보기 <span style={{ fontSize: 11, padding: "1px 6px", borderRadius: 4, background: "var(--line)" }}>흰색=질감복원 대상</span></div>
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={textureMaskPreview} alt="질감마스크" style={{ maxWidth: 280, display: "block", borderRadius: 8, border: "1px solid var(--line)", marginBottom: 8 }} />
+              <img src={textureMaskPreview} alt="질감마스크" style={{ maxWidth: 200, display: "block", borderRadius: 8, border: "1px solid var(--line)", marginBottom: 8 }} />
               <a href={textureMaskPreview} download="texture-mask.png" className="admin-btn admin-btn--ghost" style={{ fontSize: 11, display: "inline-block" }}>마스크 저장</a>
             </div>
           )}
