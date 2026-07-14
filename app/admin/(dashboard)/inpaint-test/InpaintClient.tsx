@@ -5,6 +5,7 @@ import { generateMask, submitInpaintFull, pollInpaint } from "./actions";
 
 const POLL_INTERVAL_MS = 4000;
 const ESTIMATE_SEC = 40;
+const MAX_DIM = 1024; // 전송 전 최대 해상도 (긴 변 기준)
 
 function formatMmSs(sec: number) {
   const m = Math.floor(sec / 60);
@@ -12,16 +13,39 @@ function formatMmSs(sec: number) {
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
+/** 이미지 파일을 maxDim 이하로 리사이즈해서 JPEG Blob 반환 */
+function resizeFile(file: File, maxDim = MAX_DIM): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const scale = Math.min(1, maxDim / Math.max(img.naturalWidth, img.naturalHeight));
+      const w = Math.round(img.naturalWidth * scale);
+      const h = Math.round(img.naturalHeight * scale);
+      const canvas = document.createElement("canvas");
+      canvas.width = w; canvas.height = h;
+      canvas.getContext("2d")!.drawImage(img, 0, 0, w, h);
+      canvas.toBlob((b) => b ? resolve(b) : reject(new Error("resize 실패")), "image/jpeg", 0.92);
+    };
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+
 async function bgRemovedToMask(imageUrl: string): Promise<{ blob: Blob; previewUrl: string }> {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.crossOrigin = "anonymous";
     img.onload = () => {
+      const scale = Math.min(1, MAX_DIM / Math.max(img.naturalWidth, img.naturalHeight));
+      const w = Math.round(img.naturalWidth * scale);
+      const h = Math.round(img.naturalHeight * scale);
       const canvas = document.createElement("canvas");
-      canvas.width  = img.naturalWidth;
-      canvas.height = img.naturalHeight;
+      canvas.width  = w;
+      canvas.height = h;
       const ctx = canvas.getContext("2d")!;
-      ctx.drawImage(img, 0, 0);
+      ctx.drawImage(img, 0, 0, w, h);
 
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
       const d = imageData.data;
@@ -102,10 +126,11 @@ export function InpaintClient() {
     if (!fileRef.current) return;
     setError(null);
     setPhase("generating");
-    setStatusMsg("원본 업로드 중…");
+    setStatusMsg("이미지 준비 중…");
 
+    const resized = await resizeFile(fileRef.current);
     const formData = new FormData();
-    formData.append("init_image", fileRef.current);
+    formData.append("init_image", new File([resized], "init.jpg", { type: "image/jpeg" }));
 
     setStatusMsg("배경 제거 중… (최대 30초)");
     const res = await generateMask(formData);
