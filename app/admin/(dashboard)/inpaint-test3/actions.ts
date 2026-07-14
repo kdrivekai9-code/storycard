@@ -41,41 +41,29 @@ async function invokeEdgeFunction(body: Record<string, unknown>) {
     let detail = error.message;
     try {
       const ctx = (error as unknown as { context?: Response }).context;
-      if (ctx) {
-        const b = await ctx.json().catch(() => ctx.text());
-        detail = typeof b === "string" ? b : JSON.stringify(b);
-      }
+      if (ctx) { const b = await ctx.json().catch(() => ctx.text()); detail = typeof b === "string" ? b : JSON.stringify(b); }
     } catch { /* ignore */ }
     return { ok: false as const, error: detail };
   }
   return { ok: true as const, data: data as Record<string, unknown> };
 }
 
-// BiRefNet 배경 제거 → 마스크 버퍼 반환 (인물 영역 감지용)
 async function runBiRefNet(imageUrl: string): Promise<Buffer> {
   const res = await invokeEdgeFunction({ action: "bg-remove", image_url: imageUrl });
-  if (!res.ok) throw new Error(`BiRefNet 오류: ${res.error}`);
+  if (!res.ok) throw new Error(`BiRefNet: ${res.error}`);
   const rawUrl = String(res.data.outputUrl ?? "");
   if (!rawUrl) throw new Error("BiRefNet 결과 URL 없음");
   return downloadBuffer(rawUrl);
 }
 
-// 투명 PNG에서 비투명 픽셀의 바운딩 박스 계산
-async function getBoundingBox(transparentPngBuf: Buffer): Promise<{ left: number; top: number; width: number; height: number }> {
-  const { data, info } = await sharp(transparentPngBuf)
-    .ensureAlpha()
-    .raw()
-    .toBuffer({ resolveWithObject: true });
-
+async function getBoundingBox(transparentPngBuf: Buffer) {
+  const { data, info } = await sharp(transparentPngBuf).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
   let minX = info.width, maxX = 0, minY = info.height, maxY = 0;
-  const w = info.width;
   for (let y = 0; y < info.height; y++) {
-    for (let x = 0; x < w; x++) {
-      if (data[(y * w + x) * 4 + 3] > 32) {
-        if (x < minX) minX = x;
-        if (x > maxX) maxX = x;
-        if (y < minY) minY = y;
-        if (y > maxY) maxY = y;
+    for (let x = 0; x < info.width; x++) {
+      if (data[(y * info.width + x) * 4 + 3] > 32) {
+        if (x < minX) minX = x; if (x > maxX) maxX = x;
+        if (y < minY) minY = y; if (y > maxY) maxY = y;
       }
     }
   }
@@ -83,7 +71,87 @@ async function getBoundingBox(transparentPngBuf: Buffer): Promise<{ left: number
   return { left: minX, top: minY, width: maxX - minX + 1, height: maxY - minY + 1 };
 }
 
-// ── STEP 1: 원본 사진 업로드 ─────────────────────────────────────────────────
+// ── HIGH-PASS FILTER ─────────────────────────────────────────────────────────
+// result(x,y) = clamp(original(x,y) − blur(original, sigma)(x,y) + 128)
+// 값 128 = 텍스처 없음(중립), >128 = 볼록(주름 능선), <128 = 오목(보조개·홈)
+
+async function applyHighPass(buf: Buffer, sigma: number): Promise<Buffer> {
+  const { data: origData, info } = await sharp(buf).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  const blurData = await sharp(buf).removeAlpha().blur(Math.max(0.3, sigma)).raw().toBuffer();
+  const hpData = Buffer.allocUnsafe(origData.length);
+  for (let i = 0; i < origData.length; i++) {
+    hpData[i] = Math.max(0, Math.min(255, origData[i] - blurData[i] + 128));
+  }
+  return sharp(hpData, { raw: { width: info.width, height: info.height, channels: 3 } }).png().toBuffer();
+}
+
+// ── COLOR MATCH (히스토그램 매칭) ────────────────────────────────────────────
+// 텍스처 전사 후 결과 이미지의 피부색 분포를 이미지 A(기준)와 일치시킴.
+// 이렇게 하면 원본 사진의 조명·색조 차이가 보정됩니다.
+
+async function applyColorMatch(
+  imageABuf: Buffer,   // 색상 기준 (이미지 A)
+  resultBuf: Buffer,   // 보정 대상 (텍스처 전사 결과)
+  maskBuf:   Buffer,   // 피부 마스크
+  baseW: number,
+  baseH: number,
+): Promise<Buffer> {
+  const refData  = await sharp(imageABuf).resize(baseW, baseH).removeAlpha().raw().toBuffer();
+  const { data: tgtData, info } = await sharp(resultBuf).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  const mskData  = await sharp(maskBuf).resize(baseW, baseH, { fit: "fill" }).grayscale().raw().toBuffer();
+  const ch = info.channels; // 3
+
+  // 각 채널 히스토그램 → CDF → LUT 생성
+  const luts: Uint8Array[] = [];
+  for (let c = 0; c < 3; c++) {
+    const refHist = new Array(256).fill(0);
+    const tgtHist = new Array(256).fill(0);
+    let count = 0;
+    for (let i = 0; i < baseW * baseH; i++) {
+      if (mskData[i] > 128) {
+        refHist[refData[i * 3 + c]]++;
+        tgtHist[tgtData[i * ch + c]]++;
+        count++;
+      }
+    }
+    if (count < 50) { luts.push(Uint8Array.from({ length: 256 }, (_, i) => i)); continue; }
+
+    // CDF 계산
+    const refCdf = new Float32Array(256);
+    const tgtCdf = new Float32Array(256);
+    let rs = 0, ts = 0;
+    for (let v = 0; v < 256; v++) {
+      rs += refHist[v] / count; refCdf[v] = rs;
+      ts += tgtHist[v] / count; tgtCdf[v] = ts;
+    }
+
+    // LUT: target 값 v → ref 값 중 CDF가 가장 가까운 값
+    const lut = new Uint8Array(256);
+    for (let v = 0; v < 256; v++) {
+      let rv = 0;
+      while (rv < 255 && refCdf[rv] < tgtCdf[v]) rv++;
+      lut[v] = rv;
+    }
+    luts.push(lut);
+  }
+
+  // 마스크 영역만 LUT 적용 (엣지는 부드럽게 블렌딩)
+  const outData = Buffer.from(tgtData);
+  for (let i = 0; i < baseW * baseH; i++) {
+    const alpha = mskData[i] / 255;
+    if (alpha < 0.02) continue;
+    for (let c = 0; c < 3; c++) {
+      const orig   = tgtData[i * ch + c];
+      const mapped = luts[c][orig];
+      outData[i * ch + c] = Math.round(orig * (1 - alpha) + mapped * alpha);
+    }
+  }
+
+  return sharp(outData, { raw: { width: baseW, height: baseH, channels: 3 } })
+    .jpeg({ quality: 95 }).toBuffer();
+}
+
+// ── UPLOAD ACTIONS ───────────────────────────────────────────────────────────
 
 export async function uploadOriginalPhoto(formData: FormData): Promise<
   | { ok: true;  originalUrl: string }
@@ -92,13 +160,9 @@ export async function uploadOriginalPhoto(formData: FormData): Promise<
   await requireAdmin();
   const file = formData.get("original_photo") as File | null;
   if (!file || file.size === 0) return { ok: false, error: "원본 사진을 선택해주세요." };
-  try {
-    const url = await uploadFile(file, `original.${file.name.split(".").pop() || "jpg"}`);
-    return { ok: true, originalUrl: url };
-  } catch (e) { return { ok: false, error: e instanceof Error ? e.message : String(e) }; }
+  try { return { ok: true, originalUrl: await uploadFile(file, `original.${file.name.split(".").pop() || "jpg"}`) }; }
+  catch (e) { return { ok: false, error: e instanceof Error ? e.message : String(e) }; }
 }
-
-// ── STEP 1: 이미지 A 업로드 (페이스스왑 완료본) ──────────────────────────────
 
 export async function uploadImageA(formData: FormData): Promise<
   | { ok: true;  imageAUrl: string }
@@ -107,13 +171,9 @@ export async function uploadImageA(formData: FormData): Promise<
   await requireAdmin();
   const file = formData.get("image_a") as File | null;
   if (!file || file.size === 0) return { ok: false, error: "이미지 A를 선택해주세요." };
-  try {
-    const url = await uploadFile(file, `imageA.${file.name.split(".").pop() || "jpg"}`);
-    return { ok: true, imageAUrl: url };
-  } catch (e) { return { ok: false, error: e instanceof Error ? e.message : String(e) }; }
+  try { return { ok: true, imageAUrl: await uploadFile(file, `imageA.${file.name.split(".").pop() || "jpg"}`) }; }
+  catch (e) { return { ok: false, error: e instanceof Error ? e.message : String(e) }; }
 }
-
-// ── STEP 2: 질감 마스크 업로드 ──────────────────────────────────────────────
 
 export async function uploadTextureMask(formData: FormData): Promise<
   | { ok: true;  textureMaskUrl: string }
@@ -121,14 +181,10 @@ export async function uploadTextureMask(formData: FormData): Promise<
 > {
   await requireAdmin();
   const file = formData.get("texture_mask") as File | null;
-  if (!file || file.size === 0) return { ok: false, error: "질감 마스크 이미지를 선택해주세요." };
-  try {
-    const url = await uploadFile(file, "texture-mask.png");
-    return { ok: true, textureMaskUrl: url };
-  } catch (e) { return { ok: false, error: e instanceof Error ? e.message : String(e) }; }
+  if (!file || file.size === 0) return { ok: false, error: "질감 마스크를 선택해주세요." };
+  try { return { ok: true, textureMaskUrl: await uploadFile(file, "texture-mask.png") }; }
+  catch (e) { return { ok: false, error: e instanceof Error ? e.message : String(e) }; }
 }
-
-// ── STEP 2: SAM 2 포인트로 질감 마스크 생성 ─────────────────────────────────
 
 export async function runSam2TextureMask(
   imageAUrl: string,
@@ -144,26 +200,28 @@ export async function runSam2TextureMask(
     const rawUrl = String(res.data.outputUrl ?? "");
     if (!rawUrl) return { ok: false, error: "SAM 2 결과 URL 없음" };
     const buf = await downloadBuffer(rawUrl);
-    const ourUrl = await uploadBuffer(buf, "sam2-texture-mask.png", "image/png");
-    return { ok: true, sam2RawUrl: ourUrl };
+    return { ok: true, sam2RawUrl: await uploadBuffer(buf, "sam2-mask.png", "image/png") };
   } catch (e) { return { ok: false, error: e instanceof Error ? e.message : String(e) }; }
 }
 
-// ── STEP 3: Sharp 직접 텍스처 전사 ──────────────────────────────────────────
-//
-// 원본 사진의 피부 질감(주름·보조개·모공)을 이미지 A의 피부 영역에 직접 전사합니다.
-// BiRefNet으로 두 이미지의 인물 영역을 감지해 얼굴 위치를 자동 정렬한 뒤,
-// soft-light 블렌드 모드로 텍스처를 합성합니다.
-//
-// - useAutoAlign=true : BiRefNet 바운딩박스 기반 자동 정렬 (느리지만 정확)
-// - useAutoAlign=false: 단순 리사이즈 정렬 (빠르지만 구도가 비슷한 경우에만 유효)
+// ── MAIN: 직접 텍스처 전사 ───────────────────────────────────────────────────
+
+export type EyePoint = { x: number; y: number };
 
 export async function directTextureTransfer(params: {
   originalUrl:    string;
   imageAUrl:      string;
   textureMaskUrl: string;
-  blendStrength:  number; // 0.0 ~ 1.0
-  useAutoAlign:   boolean;
+  blendStrength:  number;  // 0.0 ~ 1.0
+  highPassRadius: number;  // Gaussian sigma (1~10): 낮을수록 모공, 높을수록 주름
+  colorMatch:     boolean; // 텍스처 전사 후 이미지 A 피부톤으로 색상 보정
+  // 얼굴 랜드마크 (각 이미지 원본 좌표계)
+  origDims?:       { w: number; h: number };
+  imageADims?:     { w: number; h: number };
+  origLeftEye?:    EyePoint;
+  origRightEye?:   EyePoint;
+  imageALeftEye?:  EyePoint;
+  imageARightEye?: EyePoint;
 }): Promise<
   | { ok: true;  resultUrl: string }
   | { ok: false; error: string }
@@ -177,123 +235,117 @@ export async function directTextureTransfer(params: {
       downloadBuffer(params.textureMaskUrl),
     ]);
 
-    const baseMeta = await sharp(baseBuf).metadata();
-    const baseW = baseMeta.width!;
-    const baseH = baseMeta.height!;
+    const { width: baseW, height: baseH } = await sharp(baseBuf).metadata() as { width: number; height: number };
+    const { width: origW, height: origH } = await sharp(origBuf).metadata() as { width: number; height: number };
 
-    // ── 1. 원본 사진을 이미지 A 얼굴 위치에 정렬 ───────────────────────────
+    // ── 1. ALIGNMENT ──────────────────────────────────────────────────────
+    // 원본 사진을 이미지 A의 얼굴 각도·크기·위치에 정렬
 
-    let alignedOrigBuf: Buffer;
+    let warpedBuf: Buffer;
 
-    if (params.useAutoAlign) {
-      // BiRefNet으로 두 이미지의 인물 영역 감지 → 바운딩박스 산출
-      const [origPersonMask, basePersonMask] = await Promise.all([
-        runBiRefNet(params.originalUrl),
-        runBiRefNet(params.imageAUrl),
-      ]);
+    const hasLandmarks =
+      params.origLeftEye && params.origRightEye &&
+      params.imageALeftEye && params.imageARightEye;
 
-      const [origBbox, baseBbox] = await Promise.all([
-        getBoundingBox(origPersonMask),
-        getBoundingBox(basePersonMask),
-      ]);
+    if (hasLandmarks) {
+      // ── 1a. Face landmark-based affine alignment ───────────────────────
+      // 원본 → 이미지 A 좌표계로 확대/회전/이동하는 유사 변환 행렬 계산
 
-      // 인물 바운딩박스의 상단 45%를 얼굴/두상 영역으로 추정
-      const origFace = {
-        left:   origBbox.left,
-        top:    origBbox.top,
-        width:  origBbox.width,
-        height: Math.max(1, Math.round(origBbox.height * 0.45)),
-      };
-      const baseFace = {
-        left:   baseBbox.left,
-        top:    baseBbox.top,
-        width:  baseBbox.width,
-        height: Math.max(1, Math.round(baseBbox.height * 0.45)),
-      };
+      // 원본 랜드마크를 이미지 A 해상도 기준으로 스케일
+      const sx = baseW / origW;
+      const sy = baseH / origH;
+      const lx0 = params.origLeftEye!.x  * sx, ly0 = params.origLeftEye!.y  * sy;
+      const rx0 = params.origRightEye!.x * sx, ry0 = params.origRightEye!.y * sy;
+      const lx1 = params.imageALeftEye!.x,      ly1 = params.imageALeftEye!.y;
+      const rx1 = params.imageARightEye!.x,      ry1 = params.imageARightEye!.y;
 
-      const origMeta = await sharp(origBuf).metadata();
-      const safeOrigFace = {
-        left:   Math.max(0, origFace.left),
-        top:    Math.max(0, origFace.top),
-        width:  Math.min(origFace.width,  origMeta.width!  - Math.max(0, origFace.left)),
-        height: Math.min(origFace.height, origMeta.height! - Math.max(0, origFace.top)),
-      };
+      // 눈 중심점
+      const srcCx = (lx0 + rx0) / 2, srcCy = (ly0 + ry0) / 2;
+      const dstCx = (lx1 + rx1) / 2, dstCy = (ly1 + ry1) / 2;
 
-      // 원본 얼굴 크롭 → 이미지 A 얼굴 크기로 리사이즈
-      const origFaceCrop = await sharp(origBuf)
-        .extract(safeOrigFace)
-        .resize(baseFace.width, baseFace.height, { fit: "fill" })
-        .toBuffer();
+      // 눈 벡터 길이 → 스케일, 각도 → 회전
+      const sLen = Math.hypot(rx0 - lx0, ry0 - ly0);
+      const tLen = Math.hypot(rx1 - lx1, ry1 - ly1);
+      if (sLen < 1) throw new Error("원본 눈 포인트가 너무 가깝습니다.");
+      const scale = tLen / sLen;
+      const theta = Math.atan2(ry1 - ly1, rx1 - lx1) - Math.atan2(ry0 - ly0, rx0 - lx0);
+      const cosT  = Math.cos(theta);
+      const sinT  = Math.sin(theta);
 
-      // 회색(128) 캔버스 위에 정렬된 얼굴 크롭 배치
-      const grayCanvas = await sharp({
-        create: { width: baseW, height: baseH, channels: 3, background: { r: 128, g: 128, b: 128 } },
-      }).png().toBuffer();
-
-      alignedOrigBuf = await sharp(grayCanvas)
-        .composite([{
-          input: origFaceCrop,
-          top:   Math.max(0, baseFace.top),
-          left:  Math.max(0, baseFace.left),
-        }])
-        .png()
+      // Sharp affine: 출력픽셀(ox,oy) → 입력픽셀 역매핑
+      // ix = (cosT/scale)*(ox-dstCx) + (sinT/scale)*(oy-dstCy) + srcCx
+      // iy = (-sinT/scale)*(ox-dstCx) + (cosT/scale)*(oy-dstCy) + srcCy
+      const origResized = await sharp(origBuf).resize(baseW, baseH, { fit: "fill" }).toBuffer();
+      warpedBuf = await sharp(origResized)
+        .affine(
+          [[cosT / scale, sinT / scale], [-sinT / scale, cosT / scale]],
+          { background: { r: 128, g: 128, b: 128 }, odx: dstCx, ody: dstCy, idx: srcCx, idy: srcCy },
+        )
+        .resize(baseW, baseH, { fit: "fill" })
         .toBuffer();
 
     } else {
-      // 단순 리사이즈: 원본을 이미지 A 크기에 맞게 축소(비율 유지) + 중앙 배치
-      const origMeta = await sharp(origBuf).metadata();
-      const scale  = Math.min(baseW / origMeta.width!, baseH / origMeta.height!);
-      const fitW   = Math.round(origMeta.width!  * scale);
-      const fitH   = Math.round(origMeta.height! * scale);
-      const offsetX = Math.round((baseW - fitW) / 2);
-      const offsetY = Math.round((baseH - fitH) / 2);
+      // ── 1b. BiRefNet 바운딩박스 정렬 (랜드마크 없을 때 폴백) ─────────────
+      try {
+        const [origMask, baseMask] = await Promise.all([runBiRefNet(params.originalUrl), runBiRefNet(params.imageAUrl)]);
+        const [ob, bb] = await Promise.all([getBoundingBox(origMask), getBoundingBox(baseMask)]);
 
-      const resized = await sharp(origBuf).resize(fitW, fitH).png().toBuffer();
-      const grayCanvas = await sharp({
-        create: { width: baseW, height: baseH, channels: 3, background: { r: 128, g: 128, b: 128 } },
-      }).png().toBuffer();
+        const safeOrig = {
+          left:   Math.max(0, ob.left),
+          top:    Math.max(0, ob.top),
+          width:  Math.min(ob.width,  origW - Math.max(0, ob.left)),
+          height: Math.min(Math.round(ob.height * 0.45), origH - Math.max(0, ob.top)),
+        };
+        const targetFace = { left: bb.left, top: bb.top, width: bb.width, height: Math.round(bb.height * 0.45) };
 
-      alignedOrigBuf = await sharp(grayCanvas)
-        .composite([{ input: resized, top: offsetY, left: offsetX }])
-        .png()
-        .toBuffer();
+        const crop = await sharp(origBuf).extract(safeOrig).resize(targetFace.width, Math.max(1, targetFace.height), { fit: "fill" }).toBuffer();
+        const gray = await sharp({ create: { width: baseW, height: baseH, channels: 3, background: { r: 128, g: 128, b: 128 } } }).png().toBuffer();
+        warpedBuf  = await sharp(gray).composite([{ input: crop, top: Math.max(0, targetFace.top), left: Math.max(0, targetFace.left) }]).toBuffer();
+      } catch {
+        // 최후 수단: 단순 리사이즈
+        warpedBuf = await sharp(origBuf).resize(baseW, baseH, { fit: "fill" }).toBuffer();
+      }
     }
 
-    // ── 2. 질감 마스크를 알파로 적용 (피부 영역만 전사) ──────────────────────
+    // ── 2. HIGH-PASS FILTER ──────────────────────────────────────────────
+    // 정렬된 원본에서 저주파(조명·색상) 제거 → 고주파 텍스처(모공·주름)만 남김
+    // 결과는 128 중립값 기준 상하로 ±텍스처 정보
 
-    // 마스크 그레이스케일 리사이즈
+    const highPassBuf = await applyHighPass(warpedBuf, params.highPassRadius);
+
+    // ── 3. MASK + BLEND STRENGTH → alpha 채널 설정 ──────────────────────
+    // 마스크 흰색(피부 영역)에만 텍스처 적용, 강도 = blendStrength
+
     const maskGray = await sharp(maskBuf)
-      .resize(baseW, baseH, { fit: "fill" })
-      .grayscale()
-      .raw()
-      .toBuffer({ resolveWithObject: true });
+      .resize(baseW, baseH, { fit: "fill" }).grayscale().raw().toBuffer();
 
-    // alignedOrig에 알파 추가 후 마스크 값으로 알파 설정
-    const alignedRaw = await sharp(alignedOrigBuf)
-      .ensureAlpha()
-      .raw()
-      .toBuffer({ resolveWithObject: true });
+    const { data: hpRaw, info: hpInfo } = await sharp(highPassBuf)
+      .ensureAlpha().raw().toBuffer({ resolveWithObject: true });
 
-    const aData   = alignedRaw.data;
-    const mData   = maskGray.data;
-    const pixels  = baseW * baseH;
-
-    for (let i = 0; i < pixels; i++) {
-      // alpha = mask_value * blend_strength
-      aData[i * 4 + 3] = Math.round(mData[i] * params.blendStrength);
+    const ch = hpInfo.channels; // 4 (RGBA)
+    for (let i = 0; i < baseW * baseH; i++) {
+      hpRaw[i * ch + 3] = Math.round(maskGray[i] * params.blendStrength);
     }
 
-    const maskedAligned = await sharp(Buffer.from(aData), {
-      raw: { width: baseW, height: baseH, channels: 4 },
-    }).png().toBuffer();
+    const maskedHP = await sharp(Buffer.from(hpRaw), { raw: { width: baseW, height: baseH, channels: ch } })
+      .png().toBuffer();
 
-    // ── 3. soft-light 블렌드로 이미지 A에 텍스처 전사 ───────────────────────
+    // ── 4. SOFT-LIGHT BLEND ──────────────────────────────────────────────
+    // 고주파 텍스처를 이미지 A에 soft-light 모드로 합성
+    // soft-light 특성: 128(중립) = 변화없음, ±편차가 미세한 명암으로 표현
 
-    const resultBuf = await sharp(baseBuf)
+    let resultBuf = await sharp(baseBuf)
       .resize(baseW, baseH)
-      .composite([{ input: maskedAligned, blend: "soft-light" }])
+      .composite([{ input: maskedHP, blend: "soft-light" }])
       .jpeg({ quality: 95 })
       .toBuffer();
+
+    // ── 5. COLOR MATCH ───────────────────────────────────────────────────
+    // 텍스처 전사로 생긴 색상 편차를 이미지 A의 피부톤에 맞게 히스토그램 매칭
+
+    if (params.colorMatch) {
+      resultBuf = await applyColorMatch(baseBuf, resultBuf, maskBuf, baseW, baseH);
+    }
 
     const resultUrl = await uploadBuffer(resultBuf, "texture-transfer.jpg", "image/jpeg");
     return { ok: true, resultUrl };
