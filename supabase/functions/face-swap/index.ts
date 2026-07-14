@@ -3,6 +3,7 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 const MODELSLAB_API_URL        = "https://modelslab.com/api/v6/faceswap/single_face_swap";
 const MODELSLAB_CONTROLNET_URL = "https://modelslab.com/api/v5/controlnet";
 const MODELSLAB_INPAINT_URL    = "https://modelslab.com/api/v6/image_editing/inpaint";
+const MODELSLAB_BGREMOVE_URL   = "https://modelslab.com/api/v3/removal/background_removal";
 
 const MODELSLAB_KEY    = Deno.env.get("MODELSLAB_API_KEY") ?? "";
 const SUPABASE_URL     = Deno.env.get("SUPABASE_URL") ?? "";
@@ -266,6 +267,57 @@ Deno.serve(async (req: Request) => {
 
     if (json.status === "success") {
       return J({ status: "success", outputUrl: json.output?.[0] ?? json.proxy_links?.[0] });
+    }
+
+    return J({ status: "processing", eta: json.eta ?? 5 });
+  }
+
+  // ── 배경 제거 ─────────────────────────────────────────────────────────────
+  if (action === "bg-remove") {
+    const { image_url } = body;
+    if (!image_url) return J({ error: "image_url이 필요합니다." }, 400);
+
+    const res = await fetch(MODELSLAB_BGREMOVE_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: MODELSLAB_KEY, image_url }),
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      return J({ error: `배경 제거 API 오류 (${res.status}): ${text}` }, 502);
+    }
+
+    const json = await res.json();
+    if (json.status === "error") return J({ error: json.message ?? "배경 제거 실패" }, 502);
+
+    if (json.status === "success") {
+      const url = json.output?.[0] ?? json.image ?? json.output_url;
+      return J({ status: "success", outputUrl: url });
+    }
+
+    return J({ status: "processing", fetchUrl: json.fetch_result, eta: json.eta ?? 10 });
+  }
+
+  // ── 배경 제거 폴링 ─────────────────────────────────────────────────────────
+  if (action === "bg-remove-poll") {
+    const { fetchUrl } = body;
+    if (!fetchUrl) return J({ error: "fetchUrl이 필요합니다." }, 400);
+
+    const res = await fetch(fetchUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: MODELSLAB_KEY }),
+    });
+
+    if (!res.ok) return J({ status: "processing" });
+
+    const json = await res.json();
+    if (json.status === "error") return J({ error: json.message ?? "배경 제거 실패" }, 502);
+
+    if (json.status === "success") {
+      const url = json.output?.[0] ?? json.image ?? json.output_url;
+      return J({ status: "success", outputUrl: url });
     }
 
     return J({ status: "processing", eta: json.eta ?? 5 });
