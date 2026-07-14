@@ -307,6 +307,44 @@ Deno.serve(async (req: Request) => {
     return J({ status: "processing" });
   }
 
+  // ── SAM 2 마스크 생성 ──────────────────────────────────────────────────────
+  if (action === "sam2-mask") {
+    if (!FAL_KEY) return J({ error: "FAL_KEY 시크릿이 설정되지 않았습니다." }, 500);
+
+    const { image_url, points } = body;
+    if (!image_url) return J({ error: "image_url이 필요합니다." }, 400);
+    if (!Array.isArray(points) || points.length === 0) return J({ error: "포인트를 1개 이상 지정해주세요." }, 400);
+
+    const res = await fetch("https://fal.run/fal-ai/sam2", {
+      method: "POST",
+      headers: {
+        "Authorization": `Key ${FAL_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        image_url,
+        prompts: (points as Array<{ x: number; y: number; label: number }>).map((p) => ({
+          type: "point",
+          x: p.x,
+          y: p.y,
+          label: p.label,
+        })),
+      }),
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      return J({ error: `SAM 2 API 오류 (${res.status}): ${text}` }, 502);
+    }
+
+    const json = await res.json();
+    // fal.ai SAM 2: { masks: [{ url, width, height }], combined_mask: { url } }
+    const maskUrl = json.combined_mask?.url ?? json.masks?.[0]?.url ?? json.output?.[0]?.url;
+    if (!maskUrl) return J({ error: "SAM 2 마스크 URL 없음. 응답: " + JSON.stringify(json) }, 502);
+
+    return J({ status: "success", outputUrl: maskUrl });
+  }
+
   // ── Inpainting 제출 ────────────────────────────────────────────────────────
   if (action === "inpaint-submit") {
     const {

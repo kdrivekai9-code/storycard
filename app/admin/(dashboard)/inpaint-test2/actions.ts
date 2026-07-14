@@ -18,10 +18,6 @@ async function uploadBuffer(buffer: ArrayBuffer, name: string, contentType: stri
   return admin.storage.from(BUCKET).getPublicUrl(path).data.publicUrl;
 }
 
-async function uploadFile(file: File, name: string): Promise<string> {
-  return uploadBuffer(await file.arrayBuffer(), name, file.type || "image/jpeg");
-}
-
 async function invokeEdgeFunction(body: Record<string, unknown>) {
   const supabase = await createClient();
   const { data: { session } } = await supabase.auth.getSession();
@@ -42,42 +38,73 @@ async function invokeEdgeFunction(body: Record<string, unknown>) {
     } catch { /* ignore */ }
     return { ok: false as const, error: detail };
   }
-
   return { ok: true as const, data: data as Record<string, unknown> };
 }
 
-/** STEP 1: 원본 이미지 업로드 → ModelsLab 배경제거 → Supabase 재업로드 */
-export async function generateMask(formData: FormData): Promise<
-  | { ok: true; initUrl: string; bgRemovedUrl: string }
+async function reuploadFromUrl(url: string, name: string): Promise<string> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`이미지 다운로드 실패: ${url}`);
+  const buffer = await res.arrayBuffer();
+  return uploadBuffer(buffer, name, "image/png");
+}
+
+/** 원본 이미지 업로드 → Supabase URL 반환 */
+export async function uploadInitImage(formData: FormData): Promise<
+  | { ok: true; initUrl: string }
   | { ok: false; error: string }
 > {
   await requireAdmin();
-
-  const initFile = formData.get("init_image") as File | null;
-  if (!initFile || initFile.size === 0) return { ok: false, error: "원본 이미지를 선택해주세요." };
-
+  const file = formData.get("init_image") as File | null;
+  if (!file || file.size === 0) return { ok: false, error: "원본 이미지를 선택해주세요." };
   try {
-    const initUrl = await uploadFile(initFile, `init.${initFile.name.split(".").pop() || "jpg"}`);
-
-    // 배경 제거 (fal.ai BiRefNet, 동기 응답)
-    const bgRes = await invokeEdgeFunction({ action: "bg-remove", image_url: initUrl });
-    if (!bgRes.ok) return bgRes;
-
-    const bgRemovedUrl = String(bgRes.data.outputUrl ?? "");
-    if (!bgRemovedUrl) return { ok: false, error: "배경 제거 결과 URL을 받지 못했습니다." };
-
-    const dlRes = await fetch(bgRemovedUrl);
-    if (!dlRes.ok) return { ok: false, error: "배경 제거 이미지 다운로드 실패" };
-    const buffer = await dlRes.arrayBuffer();
-    const ourBgRemovedUrl = await uploadBuffer(buffer, "bgremoved.png", "image/png");
-
-    return { ok: true, initUrl, bgRemovedUrl: ourBgRemovedUrl };
+    const ext = file.name.split(".").pop() || "jpg";
+    const url = await uploadBuffer(await file.arrayBuffer(), `init.${ext}`, file.type || "image/jpeg");
+    return { ok: true, initUrl: url };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
 }
 
-/** STEP 2: 마스크 + 프롬프트 → fal.ai Juggernaut Flux Inpainting */
+/** BiRefNet 배경제거 → Supabase 재업로드 (Canvas가 CORS 없이 접근) */
+export async function runBiRefNetMask(initUrl: string): Promise<
+  | { ok: true; bgRemovedUrl: string }
+  | { ok: false; error: string }
+> {
+  await requireAdmin();
+  try {
+    const bgRes = await invokeEdgeFunction({ action: "bg-remove", image_url: initUrl });
+    if (!bgRes.ok) return bgRes;
+    const rawUrl = String(bgRes.data.outputUrl ?? "");
+    if (!rawUrl) return { ok: false, error: "배경 제거 결과 URL을 받지 못했습니다." };
+    const ourUrl = await reuploadFromUrl(rawUrl, "bgremoved.png");
+    return { ok: true, bgRemovedUrl: ourUrl };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** SAM 2 마스크 생성 → Supabase 재업로드 */
+export async function runSam2Mask(
+  initUrl: string,
+  points: { x: number; y: number; label: number }[],
+): Promise<
+  | { ok: true; sam2MaskUrl: string }
+  | { ok: false; error: string }
+> {
+  await requireAdmin();
+  try {
+    const res = await invokeEdgeFunction({ action: "sam2-mask", image_url: initUrl, points });
+    if (!res.ok) return res;
+    const rawUrl = String(res.data.outputUrl ?? "");
+    if (!rawUrl) return { ok: false, error: "SAM 2 마스크 URL을 받지 못했습니다." };
+    const ourUrl = await reuploadFromUrl(rawUrl, "sam2-mask.png");
+    return { ok: true, sam2MaskUrl: ourUrl };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** Flux Inpainting 제출 */
 export async function submitFalInpaint(formData: FormData): Promise<
   | { ok: true; status: "processing"; statusUrl: string; responseUrl: string }
   | { ok: false; error: string }
@@ -93,7 +120,7 @@ export async function submitFalInpaint(formData: FormData): Promise<
   if (!prompt)                          return { ok: false, error: "프롬프트를 입력해주세요." };
 
   try {
-    const maskUrl = await uploadFile(maskFile, "mask.png");
+    const maskUrl = await uploadBuffer(await maskFile.arrayBuffer(), "mask.png", "image/png");
 
     const result = await invokeEdgeFunction({
       action: "fal-inpaint-submit",
@@ -108,7 +135,6 @@ export async function submitFalInpaint(formData: FormData): Promise<
     });
 
     if (!result.ok) return result;
-
     const d = result.data;
     if (d.error) return { ok: false, error: String(d.error) };
 
@@ -129,14 +155,10 @@ export async function pollFalInpaint(statusUrl: string, responseUrl: string): Pr
   | { status: "error"; error: string }
 > {
   await requireAdmin();
-
   const result = await invokeEdgeFunction({ action: "fal-inpaint-poll", statusUrl, responseUrl });
-
   if (!result.ok) return { status: "error", error: result.error };
-
   const d = result.data;
   if (d.error)              return { status: "error", error: String(d.error) };
   if (d.status === "success") return { status: "success", outputUrl: String(d.outputUrl) };
-
   return { status: "processing" };
 }
