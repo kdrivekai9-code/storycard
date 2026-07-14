@@ -59,26 +59,11 @@ export async function generateMask(formData: FormData): Promise<
   try {
     const initUrl = await uploadFile(initFile, `init.${initFile.name.split(".").pop() || "jpg"}`);
 
-    let bgRemovedUrl = "";
+    // 배경 제거 (fal.ai BiRefNet, 동기 응답)
     const bgRes = await invokeEdgeFunction({ action: "bg-remove", image_url: initUrl });
     if (!bgRes.ok) return bgRes;
 
-    if (bgRes.data.status === "success") {
-      bgRemovedUrl = String(bgRes.data.outputUrl);
-    } else if (bgRes.data.status === "processing") {
-      const fetchUrl = String(bgRes.data.fetchUrl);
-      for (let i = 0; i < 15; i++) {
-        await new Promise((r) => setTimeout(r, 2000));
-        const pollRes = await invokeEdgeFunction({ action: "bg-remove-poll", fetchUrl });
-        if (!pollRes.ok) break;
-        if (pollRes.data.status === "success") {
-          bgRemovedUrl = String(pollRes.data.outputUrl);
-          break;
-        }
-      }
-      if (!bgRemovedUrl) return { ok: false, error: "배경 제거 시간 초과 (30초). 다시 시도해주세요." };
-    }
-
+    const bgRemovedUrl = String(bgRes.data.outputUrl ?? "");
     if (!bgRemovedUrl) return { ok: false, error: "배경 제거 결과 URL을 받지 못했습니다." };
 
     const dlRes = await fetch(bgRemovedUrl);
