@@ -102,7 +102,7 @@ export async function submitFalInpaint(formData: FormData): Promise<
       prompt,
       negative_prompt:     (formData.get("negative_prompt") as string) || "",
       num_inference_steps: parseInt((formData.get("num_inference_steps") as string) || "28"),
-      guidance_scale:      parseFloat((formData.get("guidance_scale") as string) || "3.5"),
+      guidance_scale:      Math.min(5, parseFloat((formData.get("guidance_scale") as string) || "3.5")),
       strength:            parseFloat((formData.get("strength") as string) || "0.85"),
       seed:                (formData.get("seed") as string) || undefined,
     });

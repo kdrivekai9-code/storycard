@@ -335,8 +335,8 @@ export function FalInpaintClient() {
                   style={{ width: "100%", boxSizing: "border-box" }} />
               </div>
               <div className="admin-form-group">
-                <label className="admin-label">Guidance Scale</label>
-                <input name="guidance_scale" type="number" min="1" max="20" step="0.5" defaultValue="3.5" disabled={loading}
+                <label className="admin-label">Guidance Scale (최대 5)</label>
+                <input name="guidance_scale" type="number" min="1" max="5" step="0.5" defaultValue="3.5" disabled={loading}
                   style={{ width: "100%", boxSizing: "border-box" }} />
               </div>
               <div className="admin-form-group">
