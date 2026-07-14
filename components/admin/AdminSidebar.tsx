@@ -17,6 +17,7 @@ const NAV_ITEMS = [
   { href: "/admin/inpaint-test", label: "Inpainting 테스트" },
   { href: "/admin/inpaint-test2", label: "Inpainting 테스트2 (Flux)" },
   { href: "/admin/inpaint-test3", label: "인페인팅 테스트3 (질감복원)" },
+  { href: "/admin/faceswap-test2", label: "Face Swap 테스트2 (Multi)" },
   { href: "/admin/reviews", label: "리뷰관리" },
   { href: "/admin/account", label: "계정설정" },
 ];

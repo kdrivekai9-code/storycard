@@ -204,6 +204,77 @@ export async function runSam2TextureMask(
   } catch (e) { return { ok: false, error: e instanceof Error ? e.message : String(e) }; }
 }
 
+// ── FACE PARSING (BiRefNet 사람 마스크 + YCbCr 피부색 검출) ─────────────────
+// 외부 API 없이 Sharp 단독으로 처리.
+// 1단계: BiRefNet으로 사람(인물) 실루엣 추출 → 배경 제거
+// 2단계: YCbCr 색공간 피부색 범위 검출 (Kovac 기준, 다양한 피부톤 대응)
+// 3단계: 두 마스크 AND → 형태학적 스무딩
+
+export async function runFaceParsing(imageAUrl: string): Promise<
+  | { ok: true;  maskUrl: string; segUrl: string }
+  | { ok: false; error: string }
+> {
+  await requireAdmin();
+
+  try {
+    const imgBuf = await downloadBuffer(imageAUrl);
+
+    // 원본 픽셀 (RGB 3채널)
+    const { data: pixels, info } = await sharp(imgBuf)
+      .removeAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    const W = info.width, H = info.height;
+
+    // ── BiRefNet 사람 마스크 (실패 시 전체 이미지로 폴백) ─────────────────
+    let personPx: Buffer | null = null;
+    try {
+      const birefBuf = await runBiRefNet(imageAUrl);
+      const { data } = await sharp(birefBuf)
+        .resize(W, H, { fit: "fill" })
+        .ensureAlpha()
+        .extractChannel(3)   // alpha 채널 = 사람 영역
+        .raw()
+        .toBuffer({ resolveWithObject: true });
+      personPx = Buffer.from(data);
+    } catch { /* BiRefNet 실패 시 전체 이미지에서 피부 검출 */ }
+
+    // ── YCbCr 피부색 검출 ──────────────────────────────────────────────────
+    // ITU-R BT.601 변환 후 Kovac 범위 적용
+    // Cb: 77~127, Cr: 133~173, Y > 40 (너무 어두운 영역 제외)
+    const maskRaw = Buffer.alloc(W * H, 0);
+    for (let i = 0, pi = 0; pi < pixels.length; i++, pi += 3) {
+      if (personPx && personPx[i] < 64) continue; // 사람 마스크 밖 = 제외
+
+      const r = pixels[pi], g = pixels[pi + 1], b = pixels[pi + 2];
+      const y  =  0.299   * r + 0.587   * g + 0.114   * b;
+      const cb = -0.16874 * r - 0.33126 * g + 0.5     * b + 128;
+      const cr =  0.5     * r - 0.41869 * g - 0.08131 * b + 128;
+
+      if (y > 40 && cb >= 77 && cb <= 127 && cr >= 133 && cr <= 173) {
+        maskRaw[i] = 255;
+      }
+    }
+
+    // ── 형태학적 스무딩 ────────────────────────────────────────────────────
+    // blur(4) → 작은 구멍 채움 + 노이즈 제거
+    // threshold(128) → 재이진화
+    // blur(2) → 엣지 부드럽게
+    const maskBuf = await sharp(maskRaw, { raw: { width: W, height: H, channels: 1 } })
+      .blur(4)
+      .threshold(128)
+      .blur(2)
+      .threshold(90)
+      .png()
+      .toBuffer();
+
+    const maskUrl = await uploadBuffer(maskBuf, "face-parse-mask.png", "image/png");
+    return { ok: true, maskUrl, segUrl: "" };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 // ── MAIN: 직접 텍스처 전사 ───────────────────────────────────────────────────
 
 export type EyePoint = { x: number; y: number };

@@ -1,6 +1,7 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
 const MODELSLAB_API_URL        = "https://modelslab.com/api/v6/faceswap/single_face_swap";
+const MODELSLAB_MULTI_SWAP_URL = "https://modelslab.com/api/v6/deepfake/multiple_face_swap";
 const MODELSLAB_CONTROLNET_URL = "https://modelslab.com/api/v5/controlnet";
 const MODELSLAB_INPAINT_URL    = "https://modelslab.com/api/v6/image_editing/inpaint";
 const FAL_BIREFNET_URL         = "https://fal.run/fal-ai/birefnet";
@@ -114,6 +115,38 @@ Deno.serve(async (req: Request) => {
     }
 
     return J({ status: "processing", eta: json.eta ?? 3 });
+  }
+
+  // ── Multiple Face Swap (ModelsLab deepfake) ───────────────────────────────
+  if (action === "multi-swap") {
+    if (!MODELSLAB_KEY) return J({ error: "MODELSLAB_API_KEY 시크릿이 설정되지 않았습니다." }, 500);
+    const { init_image, target_image, enhance } = body;
+    if (!init_image || !target_image) return J({ error: "init_image, target_image가 필요합니다." }, 400);
+
+    const res = await fetch(MODELSLAB_MULTI_SWAP_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        key: MODELSLAB_KEY,
+        init_image,
+        target_image,
+        enhance_face_swap: enhance ? 1 : 0,
+        output_format: "JPG",
+        watermark: false,
+        base64: false,
+      }),
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      return J({ error: `ModelsLab API 오류 (${res.status}): ${text}` }, 502);
+    }
+
+    const json = await res.json();
+    if (json.status === "error") return J({ error: json.message ?? "API 오류" }, 502);
+    if (json.status === "success") return J({ status: "success", outputUrl: json.output?.[0] ?? json.proxy_links?.[0] });
+
+    return J({ status: "processing", fetchUrl: json.fetch_result, eta: json.eta ?? 10 });
   }
 
   // ── 워크플로우 제출 ────────────────────────────────────────────────────────

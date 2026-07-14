@@ -1,18 +1,21 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   uploadOriginalPhoto,
   uploadImageA,
   uploadTextureMask,
   runSam2TextureMask,
+  runFaceParsing,
   directTextureTransfer,
   type EyePoint,
 } from "./actions";
 
-const MAX_DIM = 1024;
+// 텍스처 전사용: 해상도 손실 최소화를 위해 MAX_DIM을 높게 설정
+// 원본 이미지가 이 크기 이하면 리사이즈 없이 그대로 업로드됨
+const MAX_DIM = 4096;
 type Step = 1 | 2 | 3 | 4;
-type MaskMethod = "upload" | "sam2";
+type MaskMethod = "upload" | "sam2" | "face-parse";
 type SAMPoint = { x: number; y: number; label: 1 | 0 };
 
 function resizeFile(file: File): Promise<{ blob: Blob; w: number; h: number }> {
@@ -21,12 +24,28 @@ function resizeFile(file: File): Promise<{ blob: Blob; w: number; h: number }> {
     const url = URL.createObjectURL(file);
     img.onload = () => {
       URL.revokeObjectURL(url);
-      const scale = Math.min(1, MAX_DIM / Math.max(img.naturalWidth, img.naturalHeight));
+      const maxDim = Math.max(img.naturalWidth, img.naturalHeight);
+      const scale = Math.min(1, MAX_DIM / maxDim);
       const w = Math.round(img.naturalWidth * scale);
       const h = Math.round(img.naturalHeight * scale);
+
+      // 리사이즈가 없고 원본이 JPEG/PNG면 그대로 반환 (재압축 없음)
+      if (scale === 1 && (file.type === "image/jpeg" || file.type === "image/png")) {
+        resolve({ blob: file, w, h });
+        URL.revokeObjectURL(url);
+        return;
+      }
+
       const cv = document.createElement("canvas"); cv.width = w; cv.height = h;
       cv.getContext("2d")!.drawImage(img, 0, 0, w, h);
-      cv.toBlob((b) => b ? resolve({ blob: b, w, h }) : reject(new Error("resize 실패")), "image/jpeg", 0.92);
+      // PNG로 저장해 JPEG 압축 열화 방지 (단, 파일 크기가 큰 경우 JPEG 0.97로 폴백)
+      const useJpeg = w * h > 4_000_000; // 400만 픽셀 초과 시 JPEG
+      cv.toBlob(
+        (b) => b ? resolve({ blob: b, w, h }) : reject(new Error("resize 실패")),
+        useJpeg ? "image/jpeg" : "image/png",
+        useJpeg ? 0.97 : undefined,
+      );
+      URL.revokeObjectURL(url);
     };
     img.onerror = reject; img.src = url;
   });
@@ -73,17 +92,56 @@ export function Test3Client() {
   const [skipAlign,    setSkipAlign]    = useState(false);
 
   // STEP 3 — 질감 마스크
-  const [maskMethod,   setMaskMethod]   = useState<MaskMethod>("upload");
+  const [maskMethod,   setMaskMethod]   = useState<MaskMethod>("face-parse");
   const [maskPreview,  setMaskPreview]  = useState<string | null>(null);
   const [maskBlob,     setMaskBlob]     = useState<Blob | null>(null);
   const [maskUrl,      setMaskUrl]      = useState("");
   const [sam2Points,   setSam2Points]   = useState<SAMPoint[]>([]);
+  const [fpSegPreview, setFpSegPreview] = useState<string | null>(null); // face-parse 세그먼테이션 미리보기
 
   // STEP 4 — 설정
   const [blendStrength,  setBlendStrength]  = useState(0.7);
   const [highPassRadius, setHighPassRadius] = useState(3);
   const [colorMatch,     setColorMatch]     = useState(true);
   const [resultUrl,      setResultUrl]      = useState<string | null>(null);
+
+  // 라이트박스
+  const [lightbox, setLightbox] = useState<{ src: string; label: string } | null>(null);
+  const [lbScale, setLbScale] = useState(1);
+  const [lbPos,   setLbPos]   = useState({ x: 0, y: 0 });
+  const lbDrag = useRef<{ sx: number; sy: number; px: number; py: number } | null>(null);
+
+  // 히스토리
+  type HistoryEntry = {
+    id: string;
+    createdAt: string;
+    origUrl: string;
+    imageAUrl: string;
+    maskUrl: string;
+    resultUrl: string;
+    blendStrength: number;
+    highPassRadius: number;
+    colorMatch: boolean;
+  };
+  const [history, setHistory] = useState<HistoryEntry[]>(() => {
+    if (typeof window === "undefined") return [];
+    try { return JSON.parse(localStorage.getItem("test3-history") ?? "[]"); } catch { return []; }
+  });
+  function addHistory(entry: Omit<HistoryEntry, "id" | "createdAt">) {
+    const e: HistoryEntry = { ...entry, id: Date.now().toString(), createdAt: new Date().toISOString() };
+    setHistory(prev => {
+      const next = [e, ...prev].slice(0, 30); // 최대 30개 보관
+      localStorage.setItem("test3-history", JSON.stringify(next));
+      return next;
+    });
+  }
+  function removeHistory(id: string) {
+    setHistory(prev => {
+      const next = prev.filter(h => h.id !== id);
+      localStorage.setItem("test3-history", JSON.stringify(next));
+      return next;
+    });
+  }
 
   // 공통
   const [loading,   setLoading]   = useState(false);
@@ -183,6 +241,20 @@ export function Test3Client() {
     } catch (e2) { err(String(e2)); }
   }
 
+  async function handleFaceParsing() {
+    if (!imageAUrl) return;
+    setError(null); setLoading(true); setStatusMsg("Face Parsing 중… (약 15~30초 소요)");
+    try {
+      const res = await runFaceParsing(imageAUrl);
+      if (!res.ok) { err(res.error); return; }
+      setMaskUrl(res.maskUrl);
+      setMaskPreview(res.maskUrl);
+      setFpSegPreview(res.segUrl);
+      setMaskBlob(null);
+      setLoading(false); setStatusMsg("");
+    } catch (e2) { err(String(e2)); }
+  }
+
   // ── STEP 4 — 텍스처 전사 실행 ───────────────────────────────────────────
   async function handleTransfer() {
     setError(null); setLoading(true);
@@ -220,6 +292,11 @@ export function Test3Client() {
 
     if (!res.ok) { err(res.error); return; }
     setResultUrl(res.resultUrl);
+    addHistory({
+      origUrl, imageAUrl, maskUrl: finalMaskUrl,
+      resultUrl: res.resultUrl,
+      blendStrength, highPassRadius, colorMatch,
+    });
     setLoading(false); setStatusMsg("");
   }
 
@@ -253,7 +330,111 @@ export function Test3Client() {
     );
   }
 
+  // 라이트박스 열릴 때 줌 초기화
+  useEffect(() => { setLbScale(1); setLbPos({ x: 0, y: 0 }); }, [lightbox]);
+
+  // Escape / +/- 키 처리
+  useEffect(() => {
+    if (!lightbox) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { setLightbox(null); return; }
+      if (e.key === "+" || e.key === "=") { setLbScale(s => Math.min(s + 0.5, 6)); return; }
+      if (e.key === "-")                  { setLbScale(s => { const n = Math.max(s - 0.5, 1); if (n === 1) setLbPos({ x: 0, y: 0 }); return n; }); }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [lightbox]);
+
+  function lbZoomIn()  { setLbScale(s => Math.min(s + 0.5, 6)); }
+  function lbZoomOut() { setLbScale(s => { const n = Math.max(s - 0.5, 1); if (n === 1) setLbPos({ x: 0, y: 0 }); return n; }); }
+  function lbReset()   { setLbScale(1); setLbPos({ x: 0, y: 0 }); }
+
+  function lbOnWheel(e: React.WheelEvent) {
+    e.preventDefault();
+    if (e.deltaY < 0) lbZoomIn(); else lbZoomOut();
+  }
+  function lbOnMouseDown(e: React.MouseEvent) {
+    if (lbScale === 1) return;
+    e.preventDefault();
+    lbDrag.current = { sx: e.clientX, sy: e.clientY, px: lbPos.x, py: lbPos.y };
+  }
+  function lbOnMouseMove(e: React.MouseEvent) {
+    if (!lbDrag.current) return;
+    setLbPos({ x: lbDrag.current.px + e.clientX - lbDrag.current.sx, y: lbDrag.current.py + e.clientY - lbDrag.current.sy });
+  }
+  function lbOnMouseUp() { lbDrag.current = null; }
+
   return (
+    <>
+    {/* ── 라이트박스 오버레이 ── */}
+    {lightbox && (
+      <div
+        style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.92)", display: "flex", flexDirection: "column" }}
+        onWheel={lbOnWheel}
+      >
+        {/* 상단 바 */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 20px", flexShrink: 0 }}>
+          <span style={{ fontSize: 13, color: "rgba(255,255,255,0.7)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {lightbox.label}
+          </span>
+          <button onClick={() => setLightbox(null)}
+            style={{ background: "rgba(255,255,255,0.15)", border: "none", color: "#fff", borderRadius: 8, padding: "6px 14px", fontSize: 13, cursor: "pointer", flexShrink: 0, marginLeft: 16 }}>
+            ✕ 닫기
+          </button>
+        </div>
+
+        {/* 이미지 영역 (패닝 가능) */}
+        <div
+          style={{ flex: 1, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", cursor: lbScale > 1 ? "grab" : "default" }}
+          onMouseDown={lbOnMouseDown}
+          onMouseMove={lbOnMouseMove}
+          onMouseUp={lbOnMouseUp}
+          onMouseLeave={lbOnMouseUp}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={lightbox.src}
+            alt={lightbox.label}
+            draggable={false}
+            style={{
+              maxWidth: lbScale === 1 ? "min(92vw, 1400px)" : "none",
+              maxHeight: lbScale === 1 ? "82vh" : "none",
+              objectFit: "contain",
+              borderRadius: lbScale === 1 ? 8 : 0,
+              boxShadow: "0 8px 60px rgba(0,0,0,0.6)",
+              transform: `scale(${lbScale}) translate(${lbPos.x / lbScale}px, ${lbPos.y / lbScale}px)`,
+              transformOrigin: "center center",
+              transition: lbDrag.current ? "none" : "transform 0.15s ease",
+              userSelect: "none",
+              pointerEvents: "none",
+            }}
+          />
+        </div>
+
+        {/* 하단 줌 컨트롤 바 */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "14px 20px", flexShrink: 0 }}>
+          <button onClick={lbZoomOut} disabled={lbScale <= 1}
+            style={{ width: 40, height: 40, borderRadius: "50%", border: "none", background: lbScale <= 1 ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.2)", color: lbScale <= 1 ? "rgba(255,255,255,0.3)" : "#fff", fontSize: 20, cursor: lbScale <= 1 ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            −
+          </button>
+
+          <button onClick={lbReset}
+            style={{ padding: "6px 16px", borderRadius: 20, border: "1px solid rgba(255,255,255,0.25)", background: "transparent", color: "rgba(255,255,255,0.8)", fontSize: 13, cursor: "pointer", minWidth: 64, textAlign: "center" }}>
+            {Math.round(lbScale * 100)}%
+          </button>
+
+          <button onClick={lbZoomIn} disabled={lbScale >= 6}
+            style={{ width: 40, height: 40, borderRadius: "50%", border: "none", background: lbScale >= 6 ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.2)", color: lbScale >= 6 ? "rgba(255,255,255,0.3)" : "#fff", fontSize: 20, cursor: lbScale >= 6 ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            +
+          </button>
+
+          <span style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginLeft: 16 }}>
+            스크롤 · +/− 키로도 확대
+            {lbScale > 1 && " · 드래그로 이동"}
+          </span>
+        </div>
+      </div>
+    )}
     <div>
       {/* 스텝 인디케이터 */}
       <div style={{ display: "flex", gap: 0, marginBottom: 28 }}>
@@ -287,15 +468,21 @@ export function Test3Client() {
               { id: "a_input",    label: "이미지 A (스왑 완료본)", preview: imageAPreview, done: !!imageAUrl, handler: handleImageAUpload },
             ].map(({ id, label, preview, done, handler }) => (
               <div key={id}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: "var(--ink-soft)", marginBottom: 8 }}>{label}</div>
-                <label htmlFor={id} style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", width: "100%", aspectRatio: "3/4", border: "2px dashed var(--line)", borderRadius: 8, overflow: "hidden", cursor: loading ? "default" : "pointer", background: "var(--bg-soft)", position: "relative" }}>
-                  {preview
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: "var(--ink-soft)" }}>{label}</span>
+                  {done && <span style={{ fontSize: 11, color: "#22c55e" }}>✓ 업로드 완료</span>}
+                </div>
+                <label htmlFor={id} style={{ display: "block", width: "100%", borderRadius: 10, overflow: "hidden", cursor: loading ? "default" : "pointer", background: "var(--bg-soft)", border: "2px dashed var(--line)", position: "relative", minHeight: 280 }}>
+                  {preview ? (
                     // eslint-disable-next-line @next/next/no-img-element
-                    ? <img src={preview} alt={label} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                    : <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, color: "var(--ink-faint)", fontSize: 13 }}><span style={{ fontSize: 36 }}>+</span><span>파일 선택</span></div>}
+                    <img src={preview} alt={label} style={{ width: "100%", maxHeight: 560, objectFit: "contain", display: "block", background: "var(--bg-soft)" }} />
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: 280, gap: 10, color: "var(--ink-faint)", fontSize: 13 }}>
+                      <span style={{ fontSize: 40 }}>+</span><span>파일 선택</span>
+                    </div>
+                  )}
                 </label>
                 <input id={id} type="file" accept="image/*" disabled={loading} style={{ display: "none" }} onChange={handler} />
-                {done && <div style={{ fontSize: 11, color: "#22c55e", marginTop: 5 }}>✓ 업로드 완료</div>}
               </div>
             ))}
           </div>
@@ -323,45 +510,51 @@ export function Test3Client() {
           )}
 
           {!skipAlign && (
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 16 }}>
               {/* 원본 사진 */}
               <div>
-                <div style={{ fontSize: 12, fontWeight: 600, color: "var(--ink-soft)", marginBottom: 6 }}>
-                  원본 사진
-                  <span style={{ marginLeft: 8, fontSize: 11, color: "var(--ink-faint)", fontWeight: 400 }}>
-                    {!origEyes.left ? "👆 왼쪽 눈 클릭" : !origEyes.right ? "👆 오른쪽 눈 클릭" : "✓ 완료"}
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: "var(--ink-soft)" }}>원본 사진</span>
+                  <span style={{ fontSize: 11, padding: "2px 9px", borderRadius: 20, fontWeight: 600,
+                    background: !origEyes.left ? "#22c55e22" : !origEyes.right ? "#3b82f622" : "#22c55e22",
+                    color: !origEyes.left ? "#22c55e" : !origEyes.right ? "#3b82f6" : "#22c55e",
+                    border: `1px solid ${!origEyes.left ? "#22c55e44" : !origEyes.right ? "#3b82f644" : "#22c55e44"}` }}>
+                    {!origEyes.left ? "1. 왼쪽 눈 클릭" : !origEyes.right ? "2. 오른쪽 눈 클릭" : "✓ 완료"}
                   </span>
+                  {(origEyes.left || origEyes.right) && (
+                    <button type="button" className="admin-btn admin-btn--ghost" style={{ fontSize: 11, padding: "2px 8px" }} onClick={() => setOrigEyes({ left: null, right: null })}>초기화</button>
+                  )}
                 </div>
-                <div style={{ position: "relative", display: "block" }}>
+                <div style={{ position: "relative", borderRadius: 10, overflow: "hidden", border: "1px solid var(--line)" }}>
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={origPreview!} alt="원본" style={{ width: "100%", display: "block", borderRadius: 8, border: "1px solid var(--line)", cursor: "crosshair" }} onClick={handleOrigClick} />
+                  <img src={origPreview!} alt="원본" style={{ width: "100%", maxHeight: 600, objectFit: "contain", display: "block", background: "var(--bg-soft)", cursor: "crosshair" }} onClick={handleOrigClick} />
                   <div style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
                     <EyeDot dims={origDims} eyes={origEyes} labelStr="원본" />
                   </div>
                 </div>
-                {(origEyes.left || origEyes.right) && (
-                  <button type="button" className="admin-btn admin-btn--ghost" style={{ fontSize: 11, marginTop: 6 }} onClick={() => setOrigEyes({ left: null, right: null })}>초기화</button>
-                )}
               </div>
 
               {/* 이미지 A */}
               <div>
-                <div style={{ fontSize: 12, fontWeight: 600, color: "var(--ink-soft)", marginBottom: 6 }}>
-                  이미지 A
-                  <span style={{ marginLeft: 8, fontSize: 11, color: "var(--ink-faint)", fontWeight: 400 }}>
-                    {!imageAEyes.left ? "👆 왼쪽 눈 클릭" : !imageAEyes.right ? "👆 오른쪽 눈 클릭" : "✓ 완료"}
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: "var(--ink-soft)" }}>이미지 A (스왑 완료본)</span>
+                  <span style={{ fontSize: 11, padding: "2px 9px", borderRadius: 20, fontWeight: 600,
+                    background: !imageAEyes.left ? "#22c55e22" : !imageAEyes.right ? "#3b82f622" : "#22c55e22",
+                    color: !imageAEyes.left ? "#22c55e" : !imageAEyes.right ? "#3b82f6" : "#22c55e",
+                    border: `1px solid ${!imageAEyes.left ? "#22c55e44" : !imageAEyes.right ? "#3b82f644" : "#22c55e44"}` }}>
+                    {!imageAEyes.left ? "1. 왼쪽 눈 클릭" : !imageAEyes.right ? "2. 오른쪽 눈 클릭" : "✓ 완료"}
                   </span>
+                  {(imageAEyes.left || imageAEyes.right) && (
+                    <button type="button" className="admin-btn admin-btn--ghost" style={{ fontSize: 11, padding: "2px 8px" }} onClick={() => setImageAEyes({ left: null, right: null })}>초기화</button>
+                  )}
                 </div>
-                <div style={{ position: "relative", display: "block" }}>
+                <div style={{ position: "relative", borderRadius: 10, overflow: "hidden", border: "1px solid var(--line)" }}>
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={imageAPreview!} alt="A" style={{ width: "100%", display: "block", borderRadius: 8, border: "1px solid var(--line)", cursor: "crosshair" }} onClick={handleImageAClick} />
+                  <img src={imageAPreview!} alt="A" style={{ width: "100%", maxHeight: 600, objectFit: "contain", display: "block", background: "var(--bg-soft)", cursor: "crosshair" }} onClick={handleImageAClick} />
                   <div style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
                     <EyeDot dims={imageADims} eyes={imageAEyes} labelStr="A" />
                   </div>
                 </div>
-                {(imageAEyes.left || imageAEyes.right) && (
-                  <button type="button" className="admin-btn admin-btn--ghost" style={{ fontSize: 11, marginTop: 6 }} onClick={() => setImageAEyes({ left: null, right: null })}>초기화</button>
-                )}
               </div>
             </div>
           )}
@@ -388,35 +581,88 @@ export function Test3Client() {
             <strong> 이미지 A의 얼굴 위치 기준</strong>으로 마스크를 만드세요.
           </div>
 
-          <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-            {([["upload", "직접 업로드"], ["sam2", "SAM 2 포인트"]] as const).map(([m, lbl]) => (
+          <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
+            {([
+              ["face-parse", "✨ AI 자동 생성"],
+              ["sam2",       "SAM 2 포인트"],
+              ["upload",     "직접 업로드"],
+            ] as const).map(([m, lbl]) => (
               <button key={m} type="button" disabled={loading}
-                onClick={() => { setMaskMethod(m); setSam2Points([]); setMaskPreview(null); setMaskBlob(null); setMaskUrl(""); }}
-                style={{ padding: "6px 14px", borderRadius: 8, border: "2px solid", fontSize: 12, cursor: loading ? "default" : "pointer", borderColor: maskMethod === m ? "var(--accent)" : "var(--line)", background: maskMethod === m ? "var(--accent)" : "transparent", color: maskMethod === m ? "#fff" : "var(--ink)", fontWeight: maskMethod === m ? 700 : 400 }}>
+                onClick={() => { setMaskMethod(m); setSam2Points([]); setMaskPreview(null); setMaskBlob(null); setMaskUrl(""); setFpSegPreview(null); }}
+                style={{ padding: "6px 16px", borderRadius: 8, border: "2px solid", fontSize: 12, cursor: loading ? "default" : "pointer", borderColor: maskMethod === m ? "var(--accent)" : "var(--line)", background: maskMethod === m ? "var(--accent)" : "transparent", color: maskMethod === m ? "#fff" : "var(--ink)", fontWeight: maskMethod === m ? 700 : 400 }}>
                 {lbl}
               </button>
             ))}
           </div>
 
-          {maskMethod === "upload" && (
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
-              <div>
-                <div style={{ fontSize: 12, color: "var(--ink-soft)", marginBottom: 6 }}>이미지 A 참조</div>
+          {maskMethod === "face-parse" && (
+            <div style={{ marginBottom: 16 }}>
+              {/* 설명 카드 */}
+              <div style={{ background: "var(--bg-soft)", border: "1px solid var(--line)", borderRadius: 10, padding: "14px 16px", marginBottom: 16, fontSize: 12, lineHeight: 1.8, color: "var(--ink-soft)" }}>
+                <strong style={{ color: "var(--ink)", display: "block", marginBottom: 4 }}>BiRefNet + YCbCr 피부색 자동 검출</strong>
+                BiRefNet으로 인물 실루엣을 추출한 후, YCbCr 색공간 기반 피부색 감지로 얼굴·귀·목 영역을 자동으로 마스킹합니다.<br />
+                <span style={{ color: "var(--ink-faint)", fontSize: 11 }}>
+                  외부 API 불필요 · 소요 시간 약 5~15초 · 결과가 부정확하면 SAM 2로 보완 가능
+                </span>
+              </div>
+
+              {/* 이미지 A 미리보기 */}
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: 12, color: "var(--ink-soft)", marginBottom: 8 }}>이미지 A</div>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={imageAPreview!} alt="A" style={{ width: "100%", display: "block", borderRadius: 8, border: "1px solid var(--line)" }} />
+                <img src={imageAPreview!} alt="A" style={{ width: "100%", maxHeight: 520, objectFit: "contain", display: "block", borderRadius: 10, border: "1px solid var(--line)", background: "var(--bg-soft)" }} />
+              </div>
+
+              {/* 실행 버튼 */}
+              {!maskPreview && (
+                <button type="button" className="admin-btn" disabled={loading || !imageAUrl} onClick={handleFaceParsing}
+                  style={{ fontSize: 13, padding: "10px 24px" }}>
+                  ✨ 자동 마스크 생성
+                </button>
+              )}
+
+              {/* 결과: 이미지A + 마스크 2열 */}
+              {maskPreview && (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 16 }}>
+                  <div>
+                    <div style={{ fontSize: 12, color: "var(--ink-soft)", marginBottom: 8 }}>이미지 A (참조)</div>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={imageAPreview!} alt="A" style={{ width: "100%", maxHeight: 560, objectFit: "contain", display: "block", borderRadius: 10, border: "1px solid var(--line)", background: "var(--bg-soft)" }} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 12, color: "var(--ink-soft)", marginBottom: 8 }}>생성된 질감 마스크 (흰색=피부·귀·목)</div>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={maskPreview} alt="마스크" style={{ width: "100%", maxHeight: 560, objectFit: "contain", display: "block", borderRadius: 10, border: "1px solid var(--line)", background: "#111", marginBottom: 8 }} />
+                    <div style={{ display: "flex", gap: 10 }}>
+                      <a href={maskPreview} download="face-parse-mask.png" className="admin-btn admin-btn--ghost" style={{ fontSize: 12, display: "inline-block" }}>마스크 저장</a>
+                      <button type="button" className="admin-btn admin-btn--ghost" disabled={loading} style={{ fontSize: 12 }}
+                        onClick={() => { setMaskPreview(null); setMaskUrl(""); setFpSegPreview(null); }}>다시 생성</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {maskMethod === "upload" && (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 16 }}>
+              <div>
+                <div style={{ fontSize: 12, color: "var(--ink-soft)", marginBottom: 8 }}>이미지 A 참조</div>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={imageAPreview!} alt="A" style={{ width: "100%", maxHeight: 560, objectFit: "contain", display: "block", borderRadius: 10, border: "1px solid var(--line)", background: "var(--bg-soft)" }} />
               </div>
               <div>
-                <div style={{ fontSize: 12, color: "var(--ink-soft)", marginBottom: 6 }}>마스크 업로드</div>
-                <div style={{ fontSize: 11, color: "var(--ink-faint)", marginBottom: 8, lineHeight: 1.6 }}>이마·볼·팔자 → 흰색<br />눈·코·입 → 검정 (PNG)</div>
+                <div style={{ fontSize: 12, color: "var(--ink-soft)", marginBottom: 4 }}>마스크 업로드</div>
+                <div style={{ fontSize: 11, color: "var(--ink-faint)", marginBottom: 10, lineHeight: 1.6 }}>이마·볼·팔자 → 흰색 / 눈·코·입 → 검정 (PNG)</div>
                 {maskPreview
                   // eslint-disable-next-line @next/next/no-img-element
-                  ? <img src={maskPreview} alt="마스크" style={{ width: "100%", display: "block", borderRadius: 8, border: "1px solid var(--line)", marginBottom: 6 }} />
-                  : <label htmlFor="mask_input" style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", aspectRatio: "3/4", border: "2px dashed var(--line)", borderRadius: 8, cursor: "pointer", background: "var(--bg-soft)" }}>
-                      <span style={{ fontSize: 28, color: "var(--ink-faint)" }}>+</span>
-                      <span style={{ fontSize: 12, color: "var(--ink-faint)", marginTop: 6 }}>마스크 선택</span>
+                  ? <img src={maskPreview} alt="마스크" style={{ width: "100%", maxHeight: 560, objectFit: "contain", display: "block", borderRadius: 10, border: "1px solid var(--line)", background: "var(--bg-soft)", marginBottom: 8 }} />
+                  : <label htmlFor="mask_input" style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 280, border: "2px dashed var(--line)", borderRadius: 10, cursor: "pointer", background: "var(--bg-soft)" }}>
+                      <span style={{ fontSize: 36, color: "var(--ink-faint)" }}>+</span>
+                      <span style={{ fontSize: 13, color: "var(--ink-faint)", marginTop: 8 }}>마스크 선택</span>
                     </label>}
                 <input id="mask_input" type="file" accept="image/*" disabled={loading} style={{ display: "none" }} onChange={handleMaskUpload} />
-                {maskPreview && <label htmlFor="mask_input" style={{ fontSize: 11, color: "var(--accent)", cursor: "pointer" }}>다시 선택</label>}
+                {maskPreview && <label htmlFor="mask_input" style={{ fontSize: 12, color: "var(--accent)", cursor: "pointer", display: "inline-block" }}>다시 선택</label>}
               </div>
             </div>
           )}
@@ -426,9 +672,9 @@ export function Test3Client() {
               <div style={{ fontSize: 12, color: "var(--ink-soft)", marginBottom: 8 }}>
                 피부 영역 <span style={{ color: "#22c55e", fontWeight: 600 }}>좌클릭</span> / 제외 영역 <span style={{ color: "#ef4444", fontWeight: 600 }}>우클릭</span>
               </div>
-              <div style={{ position: "relative", display: "inline-block", maxWidth: 340, width: "100%" }}>
+              <div style={{ position: "relative", display: "block", width: "100%", borderRadius: 10, overflow: "hidden", border: "1px solid var(--line)" }}>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={imageAPreview!} alt="A" style={{ width: "100%", display: "block", borderRadius: 8, border: "1px solid var(--line)" }} />
+                <img src={imageAPreview!} alt="A" style={{ width: "100%", maxHeight: 520, objectFit: "contain", display: "block", background: "var(--bg-soft)" }} />
                 <div style={{ position: "absolute", inset: 0, cursor: "crosshair" }} onClick={handleSam2Click} onContextMenu={handleSam2RightClick}>
                   {sam2Points.map((p, i) => (
                     <div key={i} style={{ position: "absolute", left: `${(p.x / (imageADims?.w || 1)) * 100}%`, top: `${(p.y / (imageADims?.h || 1)) * 100}%`, width: 12, height: 12, borderRadius: "50%", background: p.label === 1 ? "#22c55e" : "#ef4444", border: "2px solid #fff", transform: "translate(-50%,-50%)", boxShadow: "0 1px 4px rgba(0,0,0,.5)", pointerEvents: "none" }} />
@@ -442,14 +688,18 @@ export function Test3Client() {
                 {sam2Points.length > 0 && <button type="button" className="admin-btn admin-btn--ghost" disabled={loading} style={{ fontSize: 12 }} onClick={() => setSam2Points([])}>초기화</button>}
               </div>
               {maskPreview && (
-                <div style={{ marginTop: 16, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                  <div><div style={{ fontSize: 11, color: "var(--ink-soft)", marginBottom: 5 }}>이미지 A</div>
+                <div style={{ marginTop: 16, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                  <div>
+                    <div style={{ fontSize: 12, color: "var(--ink-soft)", marginBottom: 8 }}>이미지 A</div>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={imageAPreview!} alt="A" style={{ width: "100%", display: "block", borderRadius: 8, border: "1px solid var(--line)" }} /></div>
-                  <div><div style={{ fontSize: 11, color: "var(--ink-soft)", marginBottom: 5 }}>질감 마스크</div>
+                    <img src={imageAPreview!} alt="A" style={{ width: "100%", maxHeight: 560, objectFit: "contain", display: "block", borderRadius: 10, border: "1px solid var(--line)", background: "var(--bg-soft)" }} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 12, color: "var(--ink-soft)", marginBottom: 8 }}>질감 마스크</div>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={maskPreview} alt="마스크" style={{ width: "100%", display: "block", borderRadius: 8, border: "1px solid var(--line)", marginBottom: 6 }} />
-                    <a href={maskPreview} download="texture-mask.png" className="admin-btn admin-btn--ghost" style={{ fontSize: 11, display: "inline-block" }}>마스크 저장</a></div>
+                    <img src={maskPreview} alt="마스크" style={{ width: "100%", maxHeight: 560, objectFit: "contain", display: "block", borderRadius: 10, border: "1px solid var(--line)", background: "var(--bg-soft)", marginBottom: 8 }} />
+                    <a href={maskPreview} download="texture-mask.png" className="admin-btn admin-btn--ghost" style={{ fontSize: 12, display: "inline-block" }}>마스크 저장</a>
+                  </div>
                 </div>
               )}
             </div>
@@ -468,7 +718,7 @@ export function Test3Client() {
         <div>
           <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 14 }}>STEP 4 — 텍스처 전사 설정</div>
 
-          {/* 3열 이미지 확인 */}
+          {/* 3열 이미지 확인 — 클릭 시 라이트박스 */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 20 }}>
             {[
               { label: "원본 (텍스처 소스)", src: origPreview! },
@@ -479,7 +729,9 @@ export function Test3Client() {
                 <div style={{ fontSize: 10, color: "var(--ink-soft)", marginBottom: 4 }}>{label}</div>
                 {src
                   // eslint-disable-next-line @next/next/no-img-element
-                  ? <img src={src} alt={label} style={{ width: "100%", borderRadius: 6, border: "1px solid var(--line)", display: "block" }} />
+                  ? <img src={src} alt={label}
+                      onClick={() => setLightbox({ src, label })}
+                      style={{ width: "100%", borderRadius: 6, border: "1px solid var(--line)", display: "block", cursor: "zoom-in" }} />
                   : <div style={{ width: "100%", aspectRatio: "3/4", background: "var(--bg-soft)", borderRadius: 6, border: "1px solid var(--line)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: "var(--ink-faint)" }}>업로드됨</div>}
               </div>
             ))}
@@ -571,7 +823,11 @@ export function Test3Client() {
                   <div key={label}>
                     <div style={{ fontSize: 10, color: "var(--ink-soft)", marginBottom: 5 }}>{label}</div>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={src} alt={label} style={{ width: "100%", borderRadius: 7, border: `2px solid ${accent ? "var(--accent)" : "var(--line)"}`, display: "block" }} />
+                    <img
+                      src={src} alt={label}
+                      onClick={() => setLightbox({ src, label })}
+                      style={{ width: "100%", borderRadius: 7, border: `2px solid ${accent ? "var(--accent)" : "var(--line)"}`, display: "block", cursor: "zoom-in" }}
+                    />
                   </div>
                 ))}
               </div>
@@ -593,5 +849,65 @@ export function Test3Client() {
         </div>
       )}
     </div>
+
+    {/* ── 작업 히스토리 ── */}
+    {history.length > 0 && (
+      <div style={{ marginTop: 48, borderTop: "1px solid var(--line)", paddingTop: 32 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: "var(--ink)" }}>작업 완료 리스트</div>
+            <div style={{ fontSize: 12, color: "var(--ink-faint)", marginTop: 2 }}>총 {history.length}건 · 이미지 클릭시 확대 보기</div>
+          </div>
+          <button type="button" className="admin-btn admin-btn--ghost" style={{ fontSize: 11 }}
+            onClick={() => { if (confirm("히스토리를 모두 삭제할까요?")) { setHistory([]); localStorage.removeItem("test3-history"); } }}>
+            전체 삭제
+          </button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 16 }}>
+          {history.map(h => (
+            <div key={h.id} style={{ background: "var(--bg)", border: "1px solid var(--line)", borderRadius: 12, overflow: "hidden" }}>
+              {/* 결과 이미지 썸네일 */}
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={h.resultUrl} alt="결과"
+                onClick={() => setLightbox({ src: h.resultUrl, label: `결과 · ${new Date(h.createdAt).toLocaleString("ko-KR")}` })}
+                style={{ width: "100%", aspectRatio: "4/3", objectFit: "cover", display: "block", cursor: "zoom-in" }}
+              />
+              <div style={{ padding: "10px 12px" }}>
+                {/* 원본 / 이미지A 미니 썸네일 */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 10 }}>
+                  {[{ url: h.origUrl, label: "원본" }, { url: h.imageAUrl, label: "이미지 A" }].map(({ url, label }) => (
+                    <div key={label} style={{ fontSize: 10, color: "var(--ink-faint)" }}>
+                      <div style={{ marginBottom: 3 }}>{label}</div>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={url} alt={label} onClick={() => setLightbox({ src: url, label })}
+                        style={{ width: "100%", aspectRatio: "1/1", objectFit: "cover", borderRadius: 5, border: "1px solid var(--line)", cursor: "zoom-in", display: "block" }} />
+                    </div>
+                  ))}
+                </div>
+                {/* 설정값 */}
+                <div style={{ fontSize: 11, color: "var(--ink-faint)", lineHeight: 1.7 }}>
+                  <span style={{ marginRight: 8 }}>블렌드 {Math.round(h.blendStrength * 100)}%</span>
+                  <span style={{ marginRight: 8 }}>반경 {h.highPassRadius}</span>
+                  {h.colorMatch && <span>색보정 ✓</span>}
+                </div>
+                <div style={{ fontSize: 10, color: "var(--ink-faint)", marginTop: 4 }}>
+                  {new Date(h.createdAt).toLocaleString("ko-KR")}
+                </div>
+                {/* 액션 */}
+                <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
+                  <a href={h.resultUrl} target="_blank" rel="noreferrer" className="admin-btn admin-btn--ghost" style={{ fontSize: 11, padding: "4px 10px" }}>열기</a>
+                  <button type="button" className="admin-btn admin-btn--ghost" style={{ fontSize: 11, padding: "4px 10px" }}
+                    onClick={() => navigator.clipboard.writeText(h.resultUrl)}>URL 복사</button>
+                  <button type="button" className="admin-btn admin-btn--ghost" style={{ fontSize: 11, padding: "4px 10px", marginLeft: "auto", color: "var(--ink-faint)" }}
+                    onClick={() => removeHistory(h.id)}>삭제</button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    )}
+    </>
   );
 }
