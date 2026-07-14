@@ -1,7 +1,8 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
-const MODELSLAB_API_URL       = "https://modelslab.com/api/v6/faceswap/single_face_swap";
+const MODELSLAB_API_URL        = "https://modelslab.com/api/v6/faceswap/single_face_swap";
 const MODELSLAB_CONTROLNET_URL = "https://modelslab.com/api/v5/controlnet";
+const MODELSLAB_INPAINT_URL    = "https://modelslab.com/api/v6/image_editing/inpaint";
 
 const MODELSLAB_KEY    = Deno.env.get("MODELSLAB_API_KEY") ?? "";
 const SUPABASE_URL     = Deno.env.get("SUPABASE_URL") ?? "";
@@ -249,6 +250,90 @@ Deno.serve(async (req: Request) => {
 
   // ── ControlNet XL 폴링 ─────────────────────────────────────────────────────
   if (action === "cnxl-poll") {
+    const { fetchUrl } = body;
+    if (!fetchUrl) return J({ error: "fetchUrl이 필요합니다." }, 400);
+
+    const res = await fetch(fetchUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: MODELSLAB_KEY }),
+    });
+
+    if (!res.ok) return J({ status: "processing" });
+
+    const json = await res.json();
+    if (json.status === "error") return J({ error: json.message ?? "처리 실패" }, 502);
+
+    if (json.status === "success") {
+      return J({ status: "success", outputUrl: json.output?.[0] ?? json.proxy_links?.[0] });
+    }
+
+    return J({ status: "processing", eta: json.eta ?? 5 });
+  }
+
+  // ── Inpainting 제출 ────────────────────────────────────────────────────────
+  if (action === "inpaint-submit") {
+    const {
+      init_image,
+      mask_image,
+      prompt,
+      negative_prompt,
+      model_id,
+      width,
+      height,
+      guidance_scale,
+      num_inference_steps,
+      strength,
+    } = body;
+
+    if (!init_image) return J({ error: "init_image가 필요합니다." }, 400);
+    if (!mask_image) return J({ error: "mask_image가 필요합니다." }, 400);
+    if (!prompt)     return J({ error: "prompt가 필요합니다." }, 400);
+
+    const payload: Record<string, unknown> = {
+      key: MODELSLAB_KEY,
+      model_id: model_id || "realistic-vision-v51",
+      init_image,
+      mask_image,
+      prompt,
+      negative_prompt: negative_prompt || "lowres, bad anatomy, bad hands, disfigured, ugly",
+      width:                width || 512,
+      height:               height || 768,
+      guidance_scale:       guidance_scale ?? 7.5,
+      num_inference_steps:  num_inference_steps || 31,
+      strength:             strength ?? 0.8,
+      scheduler: "UniPCMultistepScheduler",
+      watermark: false,
+      base64: false,
+    };
+
+    const res = await fetch(MODELSLAB_INPAINT_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      return J({ error: `ModelsLab Inpaint API 오류 (${res.status}): ${text}` }, 502);
+    }
+
+    const json = await res.json();
+    if (json.status === "error") return J({ error: json.message ?? "API 오류" }, 502);
+
+    if (json.status === "success") {
+      return J({ status: "success", outputUrl: json.output?.[0] ?? json.proxy_links?.[0] });
+    }
+
+    return J({
+      status: "processing",
+      fetchUrl: json.fetch_result,
+      eta: json.eta ?? 20,
+    });
+  }
+
+  // ── Inpainting 폴링 ────────────────────────────────────────────────────────
+  if (action === "inpaint-poll") {
     const { fetchUrl } = body;
     if (!fetchUrl) return J({ error: "fetchUrl이 필요합니다." }, 400);
 
