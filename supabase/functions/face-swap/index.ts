@@ -6,6 +6,7 @@ const MODELSLAB_INPAINT_URL    = "https://modelslab.com/api/v6/image_editing/inp
 const MODELSLAB_BGREMOVE_URL   = "https://modelslab.com/api/v3/removal/background_removal";
 
 const MODELSLAB_KEY    = Deno.env.get("MODELSLAB_API_KEY") ?? "";
+const FAL_KEY          = Deno.env.get("FAL_KEY") ?? "";
 const SUPABASE_URL     = Deno.env.get("SUPABASE_URL") ?? "";
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 
@@ -405,6 +406,88 @@ Deno.serve(async (req: Request) => {
     }
 
     return J({ status: "processing", eta: json.eta ?? 5 });
+  }
+
+  // ── fal.ai Juggernaut Flux Inpainting 제출 ────────────────────────────────
+  if (action === "fal-inpaint-submit") {
+    if (!FAL_KEY) return J({ error: "FAL_KEY 시크릿이 설정되지 않았습니다." }, 500);
+
+    const { image_url, mask_url, prompt, negative_prompt, num_inference_steps, guidance_scale, strength, seed } = body;
+
+    if (!image_url) return J({ error: "image_url이 필요합니다." }, 400);
+    if (!mask_url)  return J({ error: "mask_url이 필요합니다." }, 400);
+    if (!prompt)    return J({ error: "prompt가 필요합니다." }, 400);
+
+    const payload: Record<string, unknown> = {
+      image_url,
+      mask_url,
+      prompt,
+      negative_prompt: negative_prompt || "",
+      num_inference_steps: num_inference_steps ?? 28,
+      guidance_scale: guidance_scale ?? 3.5,
+      strength: strength ?? 0.85,
+    };
+    if (seed) payload.seed = seed;
+
+    const res = await fetch("https://queue.fal.run/rundiffusion-fal/juggernaut-flux-lora/inpainting", {
+      method: "POST",
+      headers: {
+        "Authorization": `Key ${FAL_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      return J({ error: `fal.ai API 오류 (${res.status}): ${text}` }, 502);
+    }
+
+    const json = await res.json();
+    // fal.ai queue: { request_id, response_url, status_url, cancel_url }
+    return J({
+      status: "processing",
+      requestId: json.request_id,
+      statusUrl: json.status_url,
+      responseUrl: json.response_url,
+    });
+  }
+
+  // ── fal.ai 폴링 ────────────────────────────────────────────────────────────
+  if (action === "fal-inpaint-poll") {
+    if (!FAL_KEY) return J({ error: "FAL_KEY 시크릿이 설정되지 않았습니다." }, 500);
+
+    const { statusUrl, responseUrl } = body;
+    if (!statusUrl) return J({ error: "statusUrl이 필요합니다." }, 400);
+
+    const res = await fetch(String(statusUrl), {
+      headers: { "Authorization": `Key ${FAL_KEY}` },
+    });
+
+    if (!res.ok) return J({ status: "processing" });
+
+    const json = await res.json();
+
+    if (json.status === "FAILED") {
+      return J({ error: json.error ?? "fal.ai 처리 실패" }, 502);
+    }
+
+    if (json.status === "COMPLETED") {
+      const rUrl = responseUrl ?? json.response_url;
+      const rRes = await fetch(String(rUrl), {
+        headers: { "Authorization": `Key ${FAL_KEY}` },
+      });
+      if (!rRes.ok) return J({ error: "결과 조회 실패" }, 502);
+
+      const result = await rRes.json();
+      const outputUrl = result.images?.[0]?.url ?? result.image?.url;
+      if (!outputUrl) return J({ error: "출력 URL을 찾을 수 없습니다. 응답: " + JSON.stringify(result) }, 502);
+
+      return J({ status: "success", outputUrl });
+    }
+
+    // IN_QUEUE / IN_PROGRESS
+    return J({ status: "processing" });
   }
 
   return J({ error: "알 수 없는 action입니다." }, 400);

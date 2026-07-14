@@ -15,6 +15,7 @@ const NAV_ITEMS = [
   { href: "/admin/faceswap", label: "Face Swap 테스트" },
   { href: "/admin/cnxl-test", label: "CNXL 테스트" },
   { href: "/admin/inpaint-test", label: "Inpainting 테스트" },
+  { href: "/admin/inpaint-test2", label: "Inpainting 테스트2 (Flux)" },
   { href: "/admin/reviews", label: "리뷰관리" },
   { href: "/admin/account", label: "계정설정" },
 ];
