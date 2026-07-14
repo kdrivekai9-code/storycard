@@ -296,7 +296,15 @@ export function InpaintClient() {
                 </span>
               </div>
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={maskPreview!} alt="마스크" style={{ width: "100%", borderRadius: 8, border: "1px solid var(--line)", display: "block" }} />
+              <img src={maskPreview!} alt="마스크" style={{ width: "100%", borderRadius: 8, border: "1px solid var(--line)", display: "block", marginBottom: 8 }} />
+              <a
+                href={maskPreview!}
+                download="mask.png"
+                className="admin-btn admin-btn--ghost"
+                style={{ fontSize: 12, display: "inline-block", textAlign: "center", width: "100%", boxSizing: "border-box" }}
+              >
+                마스크 저장
+              </a>
             </div>
           </div>
 
