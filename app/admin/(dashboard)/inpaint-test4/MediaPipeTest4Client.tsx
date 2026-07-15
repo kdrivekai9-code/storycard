@@ -85,12 +85,21 @@ function getTrianglesFromConnections(connections: Array<{ start: number; end: nu
   return triangles;
 }
 
+async function fileToCanvas(file: File): Promise<HTMLCanvasElement> {
+  const bitmap = await createImageBitmap(file);
+  const canvas = document.createElement("canvas");
+  canvas.width = bitmap.width;
+  canvas.height = bitmap.height;
+  canvas.getContext("2d")!.drawImage(bitmap, 0, 0);
+  bitmap.close();
+  return canvas;
+}
+
 async function detectLandmarks(file: File): Promise<DetectionResult | null> {
   const { landmarker, FaceLandmarker } = await loadFaceLandmarker();
-  // HTMLImageElement 대신 ImageBitmap 사용 — WebGL taint 및 타이밍 문제 방지
-  const bitmap = await createImageBitmap(file);
-  const result = landmarker.detect(bitmap);
-  bitmap.close();
+  // HTMLCanvasElement 사용 — ImageBitmap 직접 전달 시 WebGL 내부 오류 회피
+  const canvas = await fileToCanvas(file);
+  const result = landmarker.detect(canvas);
   if (!result.faceLandmarks || result.faceLandmarks.length === 0) return null;
   const landmarks = result.faceLandmarks[0];
   const triangles = getTrianglesFromConnections(FaceLandmarker.FACE_LANDMARKS_TESSELATION);
@@ -180,11 +189,9 @@ export function MediaPipeTest4Client() {
     setPhase("detecting");
     setErrorMsg("");
     try {
-      // 랜드마크 감지: File → ImageBitmap → detect
-      const [origResult, swapResult] = await Promise.all([
-        detectLandmarks(origFile),
-        detectLandmarks(swapFile),
-      ]);
+      // 같은 모델 인스턴스에 동시 detect() 호출 시 충돌 → 순차 실행
+      const origResult = await detectLandmarks(origFile);
+      const swapResult = await detectLandmarks(swapFile);
 
       if (!origResult) throw new Error("원본 이미지에서 얼굴을 찾을 수 없습니다.");
       if (!swapResult) throw new Error("스왑 이미지에서 얼굴을 찾을 수 없습니다.");
