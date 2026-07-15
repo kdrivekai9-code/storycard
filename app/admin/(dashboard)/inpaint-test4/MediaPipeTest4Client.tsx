@@ -22,7 +22,7 @@ interface DetectionResult {
 // Promise를 싱글턴으로 캐싱 → Promise.all로 동시 호출돼도 초기화는 한 번만 실행됨
 
 type LandmarkerModule = {
-  landmarker: { detect: (img: HTMLCanvasElement) => { faceLandmarks: LandmarkPoint[][] } };
+  landmarker: { detect: (img: ImageData) => { faceLandmarks: LandmarkPoint[][] } };
   FaceLandmarker: { FACE_LANDMARKS_TESSELATION: Array<{ start: number; end: number }> };
 };
 let landmarkerPromise: Promise<LandmarkerModule> | null = null;
@@ -85,21 +85,29 @@ function getTrianglesFromConnections(connections: Array<{ start: number; end: nu
   return triangles;
 }
 
-async function fileToCanvas(file: File): Promise<HTMLCanvasElement> {
+async function fileToImageData(file: File): Promise<ImageData> {
   const bitmap = await createImageBitmap(file);
   const canvas = document.createElement("canvas");
   canvas.width = bitmap.width;
   canvas.height = bitmap.height;
   canvas.getContext("2d")!.drawImage(bitmap, 0, 0);
   bitmap.close();
-  return canvas;
+  return canvas.getContext("2d")!.getImageData(0, 0, canvas.width, canvas.height);
 }
 
 async function detectLandmarks(file: File): Promise<DetectionResult | null> {
   const { landmarker, FaceLandmarker } = await loadFaceLandmarker();
-  // HTMLCanvasElement 사용 — ImageBitmap 직접 전달 시 WebGL 내부 오류 회피
-  const canvas = await fileToCanvas(file);
-  const result = landmarker.detect(canvas);
+  const imageData = await fileToImageData(file);
+  let result: { faceLandmarks: LandmarkPoint[][] };
+  try {
+    result = landmarker.detect(imageData);
+  } catch (raw) {
+    // 실제 오류 메시지를 콘솔과 UI 양쪽에 표시
+    const name = raw instanceof Error ? raw.name : "Error";
+    const msg  = raw instanceof Error ? raw.message : String(raw);
+    console.error("[MediaPipe detect]", name, msg, raw);
+    throw new Error(`MediaPipe detect 실패 — ${name}: ${msg || "(메시지 없음)"}`);
+  }
   if (!result.faceLandmarks || result.faceLandmarks.length === 0) return null;
   const landmarks = result.faceLandmarks[0];
   const triangles = getTrianglesFromConnections(FaceLandmarker.FACE_LANDMARKS_TESSELATION);
