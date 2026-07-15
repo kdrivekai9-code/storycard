@@ -35,7 +35,7 @@ async function loadFaceLandmarker() {
     baseOptions: {
       modelAssetPath:
         "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
-      delegate: "GPU",
+      // delegate 미지정 → MediaPipe가 GPU/CPU 자동 선택
     },
     outputFaceBlendshapes: false,
     runningMode: "IMAGE",
@@ -78,12 +78,15 @@ function getTrianglesFromConnections(connections: Array<{ start: number; end: nu
   return triangles;
 }
 
-async function detectLandmarks(imgElement: HTMLImageElement): Promise<DetectionResult | null> {
+async function detectLandmarks(file: File): Promise<DetectionResult | null> {
   const { landmarker, FaceLandmarker } = await loadFaceLandmarker() as {
-    landmarker: { detect: (img: HTMLImageElement) => { faceLandmarks: LandmarkPoint[][] } };
+    landmarker: { detect: (img: ImageBitmap) => { faceLandmarks: LandmarkPoint[][] } };
     FaceLandmarker: { FACE_LANDMARKS_TESSELATION: Array<{ start: number; end: number }> };
   };
-  const result = landmarker.detect(imgElement);
+  // HTMLImageElement 대신 ImageBitmap 사용 — WebGL taint 및 타이밍 문제 방지
+  const bitmap = await createImageBitmap(file);
+  const result = landmarker.detect(bitmap);
+  bitmap.close();
   if (!result.faceLandmarks || result.faceLandmarks.length === 0) return null;
   const landmarks = result.faceLandmarks[0];
   const triangles = getTrianglesFromConnections(FaceLandmarker.FACE_LANDMARKS_TESSELATION);
@@ -168,22 +171,10 @@ export function MediaPipeTest4Client() {
     setPhase("detecting");
     setErrorMsg("");
     try {
-      // 이미지 요소 생성
-      const toImg = (file: File): Promise<HTMLImageElement> =>
-        new Promise((resolve, reject) => {
-          const img = new Image();
-          img.onload = () => resolve(img);
-          img.onerror = reject;
-          img.src = URL.createObjectURL(file);
-        });
-
-      const [origImg, swapImg] = await Promise.all([toImg(origFile), toImg(swapFile)]);
-      origImgRef.current = origImg;
-      swapImgRef.current = swapImg;
-
+      // 랜드마크 감지: File → ImageBitmap → detect
       const [origResult, swapResult] = await Promise.all([
-        detectLandmarks(origImg),
-        detectLandmarks(swapImg),
+        detectLandmarks(origFile),
+        detectLandmarks(swapFile),
       ]);
 
       if (!origResult) throw new Error("원본 이미지에서 얼굴을 찾을 수 없습니다.");
@@ -191,9 +182,19 @@ export function MediaPipeTest4Client() {
 
       setOrigLandmarks(origResult.landmarks);
       setSwapLandmarks(swapResult.landmarks);
-      setTriangles(swapResult.triangles); // triangulation은 swap 기준
+      setTriangles(swapResult.triangles);
 
-      // 캔버스에 랜드마크 그리기
+      // 캔버스 오버레이: HTMLImageElement로 그리기
+      const toImg = (file: File): Promise<HTMLImageElement> =>
+        new Promise((resolve, reject) => {
+          const img = new Image();
+          img.onload = () => resolve(img);
+          img.onerror = reject;
+          img.src = URL.createObjectURL(file);
+        });
+      const [origImg, swapImg] = await Promise.all([toImg(origFile), toImg(swapFile)]);
+      origImgRef.current = origImg;
+      swapImgRef.current = swapImg;
       if (origCanvasRef.current) drawLandmarks(origCanvasRef.current, origImg, origResult.landmarks, "#00ff88");
       if (swapCanvasRef.current) drawLandmarks(swapCanvasRef.current, swapImg, swapResult.landmarks, "#ff6644");
 
