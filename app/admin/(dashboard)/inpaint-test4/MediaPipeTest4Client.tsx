@@ -22,7 +22,7 @@ interface DetectionResult {
 // Promise를 싱글턴으로 캐싱 → Promise.all로 동시 호출돼도 초기화는 한 번만 실행됨
 
 type LandmarkerModule = {
-  landmarker: { detect: (img: ImageBitmap) => { faceLandmarks: LandmarkPoint[][] } };
+  landmarker: { detect: (img: HTMLCanvasElement) => { faceLandmarks: LandmarkPoint[][] } };
   FaceLandmarker: { FACE_LANDMARKS_TESSELATION: Array<{ start: number; end: number }> };
 };
 let landmarkerPromise: Promise<LandmarkerModule> | null = null;
