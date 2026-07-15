@@ -45,6 +45,9 @@ function loadFaceLandmarker(): Promise<LandmarkerModule> {
         outputFaceBlendshapes: false,
         runningMode: "IMAGE",
         numFaces: 1,
+        minFaceDetectionConfidence: 0.1,
+        minFacePresenceConfidence: 0.1,
+        minTrackingConfidence: 0.1,
       });
       return { landmarker, FaceLandmarker } as LandmarkerModule;
     })();
@@ -98,16 +101,17 @@ async function fileToImageData(file: File): Promise<ImageData> {
 async function detectLandmarks(file: File): Promise<DetectionResult | null> {
   const { landmarker, FaceLandmarker } = await loadFaceLandmarker();
   const imageData = await fileToImageData(file);
+  console.log("[MediaPipe] 감지 시작 — imageData:", imageData.width, "×", imageData.height);
   let result: { faceLandmarks: LandmarkPoint[][] };
   try {
     result = landmarker.detect(imageData);
   } catch (raw) {
-    // 실제 오류 메시지를 콘솔과 UI 양쪽에 표시
     const name = raw instanceof Error ? raw.name : "Error";
     const msg  = raw instanceof Error ? raw.message : String(raw);
     console.error("[MediaPipe detect]", name, msg, raw);
     throw new Error(`MediaPipe detect 실패 — ${name}: ${msg || "(메시지 없음)"}`);
   }
+  console.log("[MediaPipe] 감지 결과 — faceLandmarks 수:", result.faceLandmarks?.length ?? 0);
   if (!result.faceLandmarks || result.faceLandmarks.length === 0) return null;
   const landmarks = result.faceLandmarks[0];
   const triangles = getTrianglesFromConnections(FaceLandmarker.FACE_LANDMARKS_TESSELATION);
