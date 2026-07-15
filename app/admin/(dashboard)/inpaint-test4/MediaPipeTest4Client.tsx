@@ -127,6 +127,8 @@ type Phase = "idle" | "detecting" | "detected" | "processing" | "done" | "error"
 export function MediaPipeTest4Client() {
   const [origFile, setOrigFile] = useState<File | null>(null);
   const [swapFile, setSwapFile] = useState<File | null>(null);
+  const [origPreviewUrl, setOrigPreviewUrl] = useState("");
+  const [swapPreviewUrl, setSwapPreviewUrl] = useState("");
   const [origLandmarks, setOrigLandmarks] = useState<LandmarkPoint[] | null>(null);
   const [swapLandmarks, setSwapLandmarks] = useState<LandmarkPoint[] | null>(null);
   const [triangles, setTriangles] = useState<Triangle[] | null>(null);
@@ -145,14 +147,17 @@ export function MediaPipeTest4Client() {
   const swapCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const handleFileChange = useCallback(
-    async (e: React.ChangeEvent<HTMLInputElement>, slot: "orig" | "swap") => {
+    (e: React.ChangeEvent<HTMLInputElement>, slot: "orig" | "swap") => {
       const file = e.target.files?.[0];
       if (!file) return;
+      const url = URL.createObjectURL(file);
       if (slot === "orig") {
         setOrigFile(file);
+        setOrigPreviewUrl(url);
         setOrigLandmarks(null);
       } else {
         setSwapFile(file);
+        setSwapPreviewUrl(url);
         setSwapLandmarks(null);
         setTriangles(null);
       }
@@ -243,6 +248,8 @@ export function MediaPipeTest4Client() {
         <SlotUpload
           label="원본 이미지 (피부 질감 소스)"
           file={origFile}
+          previewUrl={origPreviewUrl}
+          hasLandmarks={origLandmarks !== null}
           canvasRef={origCanvasRef}
           onChange={(e) => handleFileChange(e, "orig")}
           accentColor="#00c875"
@@ -250,6 +257,8 @@ export function MediaPipeTest4Client() {
         <SlotUpload
           label="스왑 완료 이미지 (질감 전사 대상)"
           file={swapFile}
+          previewUrl={swapPreviewUrl}
+          hasLandmarks={swapLandmarks !== null}
           canvasRef={swapCanvasRef}
           onChange={(e) => handleFileChange(e, "swap")}
           accentColor="#ff6644"
@@ -370,32 +379,22 @@ export function MediaPipeTest4Client() {
 function SlotUpload({
   label,
   file,
+  previewUrl,
+  hasLandmarks,
   canvasRef,
   onChange,
   accentColor,
 }: {
   label: string;
   file: File | null;
+  previewUrl: string;
+  hasLandmarks: boolean;
   canvasRef: React.RefObject<HTMLCanvasElement | null>;
   onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   accentColor: string;
 }) {
-  const [preview, setPreview] = useState<string>("");
-  const [showCanvas, setShowCanvas] = useState(false);
-
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
-    if (f) {
-      setPreview(URL.createObjectURL(f));
-      setShowCanvas(false);
-    }
-    onChange(e);
-  };
-
-  // 랜드마크 감지 후 canvas 표시
-  if (canvasRef.current && canvasRef.current.width > 0 && !showCanvas) {
-    setShowCanvas(true);
-  }
+  // 캔버스는 랜드마크 감지 완료 시에만 표시 (부모 state 기반 — 로컬 state 없음)
+  const showCanvas = hasLandmarks;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -412,11 +411,11 @@ function SlotUpload({
           background: "var(--bg)",
         }}
       >
-        <input type="file" accept="image/*" onChange={handleChange} style={{ display: "none" }} />
-        {preview ? (
+        <input type="file" accept="image/*" onChange={onChange} style={{ display: "none" }} />
+        {previewUrl ? (
           <>
             <img
-              src={preview}
+              src={previewUrl}
               alt=""
               style={{
                 width: "100%",
