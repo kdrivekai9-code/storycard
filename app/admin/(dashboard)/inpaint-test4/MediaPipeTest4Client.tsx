@@ -106,22 +106,30 @@ async function fileToImageData(file: File, maxDim = 1280): Promise<ImageData> {
 
 async function detectLandmarks(file: File): Promise<DetectionResult | null> {
   const { landmarker, FaceLandmarker } = await loadFaceLandmarker();
-  const imageData = await fileToImageData(file);
-  console.log("[MediaPipe] 감지 시작 — imageData:", imageData.width, "×", imageData.height);
-  let result: { faceLandmarks: LandmarkPoint[][] };
-  try {
-    result = landmarker.detect(imageData);
-  } catch (raw) {
-    const name = raw instanceof Error ? raw.name : "Error";
-    const msg  = raw instanceof Error ? raw.message : String(raw);
-    console.error("[MediaPipe detect]", name, msg, raw);
-    throw new Error(`MediaPipe detect 실패 — ${name}: ${msg || "(메시지 없음)"}`);
+
+  // 전신 사진처럼 얼굴 비율이 작을 때를 대비해 점진적으로 축소 시도
+  // normalized 좌표이므로 어느 크기에서 감지해도 결과는 동일하게 적용됨
+  for (const maxDim of [1280, 640, 320]) {
+    const imageData = await fileToImageData(file, maxDim);
+    let result: { faceLandmarks: LandmarkPoint[][] };
+    try {
+      result = landmarker.detect(imageData);
+    } catch (raw) {
+      const name = raw instanceof Error ? raw.name : "Error";
+      const msg  = raw instanceof Error ? raw.message : String(raw);
+      console.error("[MediaPipe detect]", name, msg, raw);
+      throw new Error(`MediaPipe detect 실패 — ${name}: ${msg || "(메시지 없음)"}`);
+    }
+    const found = result.faceLandmarks?.length ?? 0;
+    console.log(`[MediaPipe] maxDim=${maxDim} (${imageData.width}×${imageData.height}): 감지 수 ${found}`);
+    if (found > 0) {
+      return {
+        landmarks: result.faceLandmarks[0],
+        triangles: getTrianglesFromConnections(FaceLandmarker.FACE_LANDMARKS_TESSELATION),
+      };
+    }
   }
-  console.log("[MediaPipe] 감지 결과 — faceLandmarks 수:", result.faceLandmarks?.length ?? 0);
-  if (!result.faceLandmarks || result.faceLandmarks.length === 0) return null;
-  const landmarks = result.faceLandmarks[0];
-  const triangles = getTrianglesFromConnections(FaceLandmarker.FACE_LANDMARKS_TESSELATION);
-  return { landmarks, triangles };
+  return null;
 }
 
 // ── Canvas overlay 그리기 ─────────────────────────────────────────────────────
