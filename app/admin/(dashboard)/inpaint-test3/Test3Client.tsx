@@ -104,6 +104,8 @@ export function Test3Client() {
   const [highPassRadius, setHighPassRadius] = useState(3);
   const [colorMatch,     setColorMatch]     = useState(true);
   const [resultUrl,      setResultUrl]      = useState<string | null>(null);
+  const [warpedUrl,      setWarpedUrl]      = useState<string | null>(null);
+  const [highPassUrl,    setHighPassUrl]    = useState<string | null>(null);
 
   // 라이트박스
   const [lightbox, setLightbox] = useState<{ src: string; label: string } | null>(null);
@@ -292,6 +294,8 @@ export function Test3Client() {
 
     if (!res.ok) { err(res.error); return; }
     setResultUrl(res.resultUrl);
+    setWarpedUrl(res.warpedUrl);
+    setHighPassUrl(res.highPassUrl);
     addHistory({
       origUrl, imageAUrl, maskUrl: finalMaskUrl,
       resultUrl: res.resultUrl,
@@ -306,7 +310,8 @@ export function Test3Client() {
     setImageAPreview(null); setImageAUrl(""); setImageADims(null);
     setOrigEyes({ left: null, right: null }); setImageAEyes({ left: null, right: null }); setSkipAlign(false);
     setMaskPreview(null); setMaskBlob(null); setMaskUrl(""); setSam2Points([]);
-    setResultUrl(null); setError(null); setLoading(false); setStatusMsg("");
+    setResultUrl(null); setWarpedUrl(null); setHighPassUrl(null);
+    setError(null); setLoading(false); setStatusMsg("");
   }
 
   // ── 헬퍼 컴포넌트 ────────────────────────────────────────────────────────
@@ -814,6 +819,7 @@ export function Test3Client() {
           {resultUrl && (
             <div>
               <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>텍스처 전사 결과</div>
+              {/* 메인 3열: 원본 / 이미지A / 결과 */}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 16 }}>
                 {[
                   { label: "원본 (텍스처 소스)", src: origPreview! },
@@ -831,10 +837,52 @@ export function Test3Client() {
                   </div>
                 ))}
               </div>
+
+              {/* 진단 이미지: 정렬된 원본 + high-pass */}
+              {(warpedUrl || highPassUrl) && (
+                <details style={{ marginBottom: 16 }}>
+                  <summary style={{ fontSize: 12, color: "var(--ink-soft)", cursor: "pointer", userSelect: "none", padding: "6px 0" }}>
+                    🔍 진단 이미지 보기 (정렬 확인용)
+                  </summary>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
+                    {warpedUrl && (
+                      <div>
+                        <div style={{ fontSize: 10, color: "var(--ink-soft)", marginBottom: 5 }}>
+                          정렬된 원본 (warped) — 이미지 A 위치에 맞게 변환된 원본
+                        </div>
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={warpedUrl} alt="warped"
+                          onClick={() => setLightbox({ src: warpedUrl, label: "정렬된 원본 (warped)" })}
+                          style={{ width: "100%", borderRadius: 7, border: "1px solid var(--line)", display: "block", cursor: "zoom-in" }} />
+                        <div style={{ fontSize: 10, color: "var(--ink-faint)", marginTop: 4, lineHeight: 1.5 }}>
+                          ✓ 이미지 A의 얼굴과 겹쳐 보이면 정렬 성공<br />
+                          ✗ 얼굴이 다른 위치면 랜드마크 재설정 필요
+                        </div>
+                      </div>
+                    )}
+                    {highPassUrl && (
+                      <div>
+                        <div style={{ fontSize: 10, color: "var(--ink-soft)", marginBottom: 5 }}>
+                          High-Pass 결과 — 회색=중립, 밝음=볼록, 어두움=오목
+                        </div>
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={highPassUrl} alt="highpass"
+                          onClick={() => setLightbox({ src: highPassUrl, label: "High-Pass 필터 결과" })}
+                          style={{ width: "100%", borderRadius: 7, border: "1px solid var(--line)", display: "block", cursor: "zoom-in" }} />
+                        <div style={{ fontSize: 10, color: "var(--ink-faint)", marginTop: 4, lineHeight: 1.5 }}>
+                          ✓ 피부 영역에 주름·모공 패턴이 보이면 high-pass 성공<br />
+                          ✗ 전체가 회색(128)이면 반경이 너무 크거나 작음
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </details>
+              )}
+
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <a href={resultUrl} target="_blank" rel="noreferrer" className="admin-btn" style={{ fontSize: 12 }}>원본 URL 열기</a>
                 <button type="button" className="admin-btn admin-btn--ghost" style={{ fontSize: 12 }} onClick={() => navigator.clipboard.writeText(resultUrl)}>URL 복사</button>
-                <button type="button" className="admin-btn admin-btn--ghost" style={{ fontSize: 12 }} onClick={() => setResultUrl(null)}>다시 시도</button>
+                <button type="button" className="admin-btn admin-btn--ghost" style={{ fontSize: 12 }} onClick={() => { setResultUrl(null); setWarpedUrl(null); setHighPassUrl(null); }}>다시 시도</button>
                 <button type="button" className="admin-btn admin-btn--ghost" style={{ fontSize: 12 }} onClick={reset}>처음부터</button>
               </div>
               <div style={{ marginTop: 8, fontSize: 11, color: "var(--ink-faint)", fontFamily: "monospace", wordBreak: "break-all" }}>{resultUrl}</div>

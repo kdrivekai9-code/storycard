@@ -75,12 +75,13 @@ async function getBoundingBox(transparentPngBuf: Buffer) {
 // result(x,y) = clamp(original(x,y) − blur(original, sigma)(x,y) + 128)
 // 값 128 = 텍스처 없음(중립), >128 = 볼록(주름 능선), <128 = 오목(보조개·홈)
 
-async function applyHighPass(buf: Buffer, sigma: number): Promise<Buffer> {
+// amplify: 1.0 = 원본, 2.0 = 텍스처 편차 2× 강조 (보조개·주름 등 미세 구조 가시화)
+async function applyHighPass(buf: Buffer, sigma: number, amplify = 2.0): Promise<Buffer> {
   const { data: origData, info } = await sharp(buf).removeAlpha().raw().toBuffer({ resolveWithObject: true });
   const blurData = await sharp(buf).removeAlpha().blur(Math.max(0.3, sigma)).raw().toBuffer();
   const hpData = Buffer.allocUnsafe(origData.length);
   for (let i = 0; i < origData.length; i++) {
-    hpData[i] = Math.max(0, Math.min(255, origData[i] - blurData[i] + 128));
+    hpData[i] = Math.max(0, Math.min(255, 128 + (origData[i] - blurData[i]) * amplify));
   }
   return sharp(hpData, { raw: { width: info.width, height: info.height, channels: 3 } }).png().toBuffer();
 }
@@ -294,7 +295,7 @@ export async function directTextureTransfer(params: {
   imageALeftEye?:  EyePoint;
   imageARightEye?: EyePoint;
 }): Promise<
-  | { ok: true;  resultUrl: string }
+  | { ok: true;  resultUrl: string; warpedUrl: string; highPassUrl: string }
   | { ok: false; error: string }
 > {
   await requireAdmin();
@@ -319,70 +320,62 @@ export async function directTextureTransfer(params: {
       params.imageALeftEye && params.imageARightEye;
 
     if (hasLandmarks) {
-      // ── 1a. Face landmark-based affine alignment ───────────────────────
-      // 원본 → 이미지 A 좌표계로 확대/회전/이동하는 유사 변환 행렬 계산
+      // ── 1a. 2-point similarity transform (landmark 기반) ──────────────
+      // 원본을 baseW×baseH로 먼저 fit:fill 리사이즈한 뒤,
+      // 스케일된 공간에서 2점 유사 변환을 계산해 affine 적용.
+      // 핵심: forward 변환 계수를 직접 계산 → sx≠sy여도 정확.
 
-      // 원본 랜드마크를 이미지 A 해상도 기준으로 스케일
-      const sx = baseW / origW;
-      const sy = baseH / origH;
-      const lx0 = params.origLeftEye!.x  * sx, ly0 = params.origLeftEye!.y  * sy;
-      const rx0 = params.origRightEye!.x * sx, ry0 = params.origRightEye!.y * sy;
-      const lx1 = params.imageALeftEye!.x,      ly1 = params.imageALeftEye!.y;
-      const rx1 = params.imageARightEye!.x,      ry1 = params.imageARightEye!.y;
+      const lo = params.origLeftEye!,  ro = params.origRightEye!;
+      const la = params.imageALeftEye!, ra = params.imageARightEye!;
 
-      // 눈 중심점
-      const srcCx = (lx0 + rx0) / 2, srcCy = (ly0 + ry0) / 2;
-      const dstCx = (lx1 + rx1) / 2, dstCy = (ly1 + ry1) / 2;
+      const sx = baseW / origW, sy = baseH / origH;
+      // 원본 눈 좌표를 baseW×baseH 공간으로 스케일
+      const lx0 = lo.x * sx, ly0 = lo.y * sy;
+      const rx0 = ro.x * sx, ry0 = ro.y * sy;
 
-      // 눈 벡터 길이 → 스케일, 각도 → 회전
-      const sLen = Math.hypot(rx0 - lx0, ry0 - ly0);
-      const tLen = Math.hypot(rx1 - lx1, ry1 - ly1);
-      if (sLen < 1) throw new Error("원본 눈 포인트가 너무 가깝습니다.");
-      const scale = tLen / sLen;
-      const theta = Math.atan2(ry1 - ly1, rx1 - lx1) - Math.atan2(ry0 - ly0, rx0 - lx0);
-      const cosT  = Math.cos(theta);
-      const sinT  = Math.sin(theta);
+      // 두 눈 벡터
+      const dx_s = rx0 - lx0, dy_s = ry0 - ly0;   // scaled orig space
+      const dx_a = ra.x - la.x, dy_a = ra.y - la.y; // imageA space
 
-      // Sharp affine: 출력픽셀(ox,oy) → 입력픽셀 역매핑
-      // ix = (cosT/scale)*(ox-dstCx) + (sinT/scale)*(oy-dstCy) + srcCx
-      // iy = (-sinT/scale)*(ox-dstCx) + (cosT/scale)*(oy-dstCy) + srcCy
+      const D = dx_s * dx_s + dy_s * dy_s;
+      if (D < 1) throw new Error("원본 눈 포인트가 너무 가깝습니다.");
+
+      // 순방향 유사 변환 계수 (scaled orig → imageA)
+      const fwdA = (dx_s * dx_a + dy_s * dy_a) / D;
+      const fwdB = (dx_s * dy_a - dy_s * dx_a) / D;
+      const s2   = fwdA * fwdA + fwdB * fwdB; // = (scale)^2
+
+      // 역행렬 (imageA → scaled orig): Sharp affine 입력
+      const m00 =  fwdA / s2, m01 =  fwdB / s2;
+      const m10 = -fwdB / s2, m11 =  fwdA / s2;
+
       const origResized = await sharp(origBuf).resize(baseW, baseH, { fit: "fill" }).toBuffer();
       warpedBuf = await sharp(origResized)
         .affine(
-          [[cosT / scale, sinT / scale], [-sinT / scale, cosT / scale]],
-          { background: { r: 128, g: 128, b: 128 }, odx: dstCx, ody: dstCy, idx: srcCx, idy: srcCy },
+          [[m00, m01], [m10, m11]],
+          { background: { r: 128, g: 128, b: 128 }, odx: la.x, ody: la.y, idx: lx0, idy: ly0 },
         )
         .resize(baseW, baseH, { fit: "fill" })
         .toBuffer();
 
     } else {
-      // ── 1b. BiRefNet 바운딩박스 정렬 (랜드마크 없을 때 폴백) ─────────────
-      try {
-        const [origMask, baseMask] = await Promise.all([runBiRefNet(params.originalUrl), runBiRefNet(params.imageAUrl)]);
-        const [ob, bb] = await Promise.all([getBoundingBox(origMask), getBoundingBox(baseMask)]);
-
-        const safeOrig = {
-          left:   Math.max(0, ob.left),
-          top:    Math.max(0, ob.top),
-          width:  Math.min(ob.width,  origW - Math.max(0, ob.left)),
-          height: Math.min(Math.round(ob.height * 0.45), origH - Math.max(0, ob.top)),
-        };
-        const targetFace = { left: bb.left, top: bb.top, width: bb.width, height: Math.round(bb.height * 0.45) };
-
-        const crop = await sharp(origBuf).extract(safeOrig).resize(targetFace.width, Math.max(1, targetFace.height), { fit: "fill" }).toBuffer();
-        const gray = await sharp({ create: { width: baseW, height: baseH, channels: 3, background: { r: 128, g: 128, b: 128 } } }).png().toBuffer();
-        warpedBuf  = await sharp(gray).composite([{ input: crop, top: Math.max(0, targetFace.top), left: Math.max(0, targetFace.left) }]).toBuffer();
-      } catch {
-        // 최후 수단: 단순 리사이즈
-        warpedBuf = await sharp(origBuf).resize(baseW, baseH, { fit: "fill" }).toBuffer();
-      }
+      // ── 1b. 랜드마크 없음 → 단순 full-image 리사이즈 ─────────────────
+      // BiRefNet bbox crop 방식은 회색 캔버스 경계선이 high-pass에서
+      // ghost face로 나타나는 아티팩트를 유발하므로 사용하지 않음.
+      warpedBuf = await sharp(origBuf).resize(baseW, baseH, { fit: "fill" }).toBuffer();
     }
 
     // ── 2. HIGH-PASS FILTER ──────────────────────────────────────────────
     // 정렬된 원본에서 저주파(조명·색상) 제거 → 고주파 텍스처(모공·주름)만 남김
-    // 결과는 128 중립값 기준 상하로 ±텍스처 정보
+    // 결과는 128 중립값 기준 상하로 ±텍스처 정보 (amplify=2.0으로 편차 강조)
 
-    const highPassBuf = await applyHighPass(warpedBuf, params.highPassRadius);
+    const highPassBuf = await applyHighPass(warpedBuf, params.highPassRadius, 2.0);
+
+    // 진단용 중간 결과 업로드 (비동기, 결과에 URL 포함)
+    const [warpedUrl, highPassUrl] = await Promise.all([
+      uploadBuffer(warpedBuf,   "dbg-warped.jpg",    "image/jpeg"),
+      uploadBuffer(highPassBuf, "dbg-highpass.png",  "image/png"),
+    ]);
 
     // ── 3. MASK + BLEND STRENGTH → alpha 채널 설정 ──────────────────────
     // 마스크 흰색(피부 영역)에만 텍스처 적용, 강도 = blendStrength
@@ -419,7 +412,7 @@ export async function directTextureTransfer(params: {
     }
 
     const resultUrl = await uploadBuffer(resultBuf, "texture-transfer.jpg", "image/jpeg");
-    return { ok: true, resultUrl };
+    return { ok: true, resultUrl, warpedUrl, highPassUrl };
 
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
