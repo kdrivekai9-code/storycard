@@ -44,23 +44,29 @@ export async function submitMultiFaceSwap(formData: FormData): Promise<
 > {
   await requireAdmin();
 
-  const initFile   = formData.get("init_image")   as File | null;
-  const targetFile = formData.get("target_image") as File | null;
-  const enhance    = formData.get("enhance") === "1";
+  const initFile    = formData.get("init_image")    as File | null;
+  const targetFile  = formData.get("target_image")  as File | null;
+  const target2File = formData.get("target_image_2") as File | null;
+  const enhance     = formData.get("enhance") === "1";
 
   if (!initFile   || initFile.size === 0)   return { ok: false, error: "Init Image를 선택해주세요." };
-  if (!targetFile || targetFile.size === 0) return { ok: false, error: "Target Image를 선택해주세요." };
+  if (!targetFile || targetFile.size === 0) return { ok: false, error: "얼굴 소스 1을 선택해주세요." };
+
+  const hasSecond = target2File && target2File.size > 0;
 
   try {
-    const [initUrl, targetUrl] = await Promise.all([
+    const uploads = await Promise.all([
       uploadToStorage(initFile,   "init"),
-      uploadToStorage(targetFile, "target"),
+      uploadToStorage(targetFile, "target1"),
+      hasSecond ? uploadToStorage(target2File, "target2") : Promise.resolve(null),
     ]);
+    const [initUrl, target1Url, target2Url] = uploads;
 
     const result = await invokeEdgeFunction({
       action: "multi-swap",
       init_image:   initUrl,
-      target_image: targetUrl,
+      // 2인→2인 스왑: target_image를 배열로 전달 (ModelsLab API 배열 지원 시도)
+      target_image: target2Url ? [target1Url, target2Url] : target1Url,
       enhance,
     });
 

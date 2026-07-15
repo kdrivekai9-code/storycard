@@ -123,13 +123,14 @@ Deno.serve(async (req: Request) => {
     const { init_image, target_image, enhance } = body;
     if (!init_image || !target_image) return J({ error: "init_image, target_image가 필요합니다." }, 400);
 
+    // target_image가 배열이면 2인→2인 스왑 (배열 그대로 전달)
     const res = await fetch(MODELSLAB_MULTI_SWAP_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         key: MODELSLAB_KEY,
         init_image,
-        target_image,
+        target_image,           // string | string[]
         enhance_face_swap: enhance ? 1 : 0,
         output_format: "JPG",
         watermark: false,

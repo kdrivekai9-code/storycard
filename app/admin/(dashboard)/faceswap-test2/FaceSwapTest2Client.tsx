@@ -10,17 +10,25 @@ function formatMmSs(sec: number) {
   return `${String(Math.floor(sec / 60)).padStart(2, "0")}:${String(sec % 60).padStart(2, "0")}`;
 }
 
-type SlotKey = "init_image" | "target_image";
-const SLOTS: { key: SlotKey; label: string; desc: string }[] = [
+type SlotKey = "init_image" | "target_image" | "target_image_2";
+const SLOTS: { key: SlotKey; label: string; desc: string; required: boolean }[] = [
   {
     key: "init_image",
     label: "Init Image",
     desc: "얼굴이 교체될 기본 이미지 (여러 명이 있어도 됩니다)",
+    required: true,
   },
   {
     key: "target_image",
-    label: "Target Image",
-    desc: "새로 합성할 얼굴이 담긴 이미지 (소스 얼굴)",
+    label: "얼굴 소스 1",
+    desc: "교체할 얼굴 이미지 (필수)",
+    required: true,
+  },
+  {
+    key: "target_image_2",
+    label: "얼굴 소스 2",
+    desc: "2번째 얼굴 소스 — 선택사항 (2인→2인 스왑 시)",
+    required: false,
   },
 ];
 
@@ -101,7 +109,8 @@ export function FaceSwapTest2Client() {
 
   const loading  = phase !== "idle";
   const progress = Math.min(100, Math.round((elapsed / ESTIMATE_SEC) * 100));
-  const ready    = Object.keys(previews).length >= 2;
+  const ready    = !!previews.init_image && !!previews.target_image;
+  const isTwoToTwo = !!previews.target_image_2;
 
   return (
     <>
@@ -117,11 +126,16 @@ export function FaceSwapTest2Client() {
       )}
 
       <form ref={formRef} onSubmit={handleSubmit}>
-        {/* 이미지 슬롯 2개 */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24, marginBottom: 24 }}>
-          {SLOTS.map(({ key, label, desc }) => (
+        {/* 이미지 슬롯 3개 */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 20, marginBottom: 24 }}>
+          {SLOTS.map(({ key, label, desc, required }) => (
             <div key={key}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: "var(--ink)", marginBottom: 4 }}>{label}</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: "var(--ink)" }}>{label}</span>
+                {!required && (
+                  <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 4, background: "var(--line)", color: "var(--ink-faint)" }}>선택</span>
+                )}
+              </div>
               <div style={{ fontSize: 12, color: "var(--ink-soft)", marginBottom: 10 }}>{desc}</div>
               <label htmlFor={key} style={{ display: "block", width: "100%", aspectRatio: "3/4", border: "2px dashed var(--line)", borderRadius: 10, overflow: "hidden", cursor: loading ? "default" : "pointer", background: "var(--bg-soft)", position: "relative" }}>
                 {previews[key] ? (
@@ -165,7 +179,7 @@ export function FaceSwapTest2Client() {
         {/* 실행 버튼 */}
         <button type="submit" className="admin-btn" disabled={loading || !ready}
           style={{ minWidth: 180, fontSize: 14, padding: "10px 28px", marginBottom: 24 }}>
-          {loading ? "처리 중…" : "✦ Multiple Face Swap 실행"}
+          {loading ? "처리 중…" : isTwoToTwo ? "✦ 2인→2인 Face Swap 실행" : "✦ Multiple Face Swap 실행"}
         </button>
 
         {/* 진행 상태 */}
