@@ -88,14 +88,20 @@ function getTrianglesFromConnections(connections: Array<{ start: number; end: nu
   return triangles;
 }
 
-async function fileToImageData(file: File): Promise<ImageData> {
+async function fileToImageData(file: File, maxDim = 1280): Promise<ImageData> {
   const bitmap = await createImageBitmap(file);
+  // MediaPipe는 고해상도 이미지에서 얼굴 감지 실패 → 최대 1280px로 축소
+  // 랜드마크는 normalized(0~1) 좌표이므로 원본 크기에도 동일하게 적용됨
+  const scale = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height));
+  const w = Math.round(bitmap.width * scale);
+  const h = Math.round(bitmap.height * scale);
   const canvas = document.createElement("canvas");
-  canvas.width = bitmap.width;
-  canvas.height = bitmap.height;
-  canvas.getContext("2d")!.drawImage(bitmap, 0, 0);
+  canvas.width = w;
+  canvas.height = h;
+  canvas.getContext("2d")!.drawImage(bitmap, 0, 0, w, h);
   bitmap.close();
-  return canvas.getContext("2d")!.getImageData(0, 0, canvas.width, canvas.height);
+  console.log(`[MediaPipe] 이미지 리사이즈: ${bitmap.width}×${bitmap.height} → ${w}×${h}`);
+  return canvas.getContext("2d")!.getImageData(0, 0, w, h);
 }
 
 async function detectLandmarks(file: File): Promise<DetectionResult | null> {
