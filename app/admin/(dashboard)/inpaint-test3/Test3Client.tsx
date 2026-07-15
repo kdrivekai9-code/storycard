@@ -508,9 +508,11 @@ export function Test3Client() {
           </div>
 
           {skipAlign && (
-            <div style={{ fontSize: 12, color: "#f59e0b", padding: "8px 12px", background: "#fefce8", borderRadius: 6, marginBottom: 14 }}>
-              ⚠️ 건너뜀 — BiRefNet 바운딩박스로 자동 정렬합니다 (정확도 낮음).
-              <button type="button" style={{ marginLeft: 10, fontSize: 11, color: "var(--accent)", background: "none", border: "none", cursor: "pointer" }} onClick={() => setSkipAlign(false)}>취소</button>
+            <div style={{ fontSize: 12, color: "#f59e0b", padding: "10px 14px", background: "#fefce8", borderRadius: 6, marginBottom: 14, lineHeight: 1.7 }}>
+              ⚠️ <strong>건너뜀 — 단순 리사이즈만 적용</strong>됩니다.<br />
+              원본과 이미지 A의 <strong>얼굴 위치·크기가 다르면 텍스처 위치가 틀어집니다.</strong><br />
+              <span style={{ fontSize: 11, color: "#92400e" }}>정확한 정렬을 원하면 취소 후 왼쪽 눈 → 오른쪽 눈 순으로 두 이미지 각각 클릭하세요.</span>
+              <button type="button" style={{ marginLeft: 10, fontSize: 11, color: "var(--accent)", background: "none", border: "none", cursor: "pointer", textDecoration: "underline" }} onClick={() => setSkipAlign(false)}>취소하고 랜드마크 설정</button>
             </div>
           )}
 

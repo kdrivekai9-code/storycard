@@ -320,48 +320,67 @@ export async function directTextureTransfer(params: {
       params.imageALeftEye && params.imageARightEye;
 
     if (hasLandmarks) {
-      // ── 1a. 2-point similarity transform (landmark 기반) ──────────────
-      // 원본을 baseW×baseH로 먼저 fit:fill 리사이즈한 뒤,
-      // 스케일된 공간에서 2점 유사 변환을 계산해 affine 적용.
-      // 핵심: forward 변환 계수를 직접 계산 → sx≠sy여도 정확.
+      // ── 1a. 역변환 bilinear warp (landmark 기반, 정확한 구현) ────────
+      // Sharp.affine 후 fit:fill resize는 정렬된 좌표계를 파괴함.
+      // → 각 출력픽셀(ox,oy)에서 역변환으로 orig 좌표를 직접 계산,
+      //   native resolution의 orig 픽셀을 bilinear 보간해서 샘플링.
+      //   출력은 항상 정확히 baseW×baseH이며 resize 왜곡 없음.
 
       const lo = params.origLeftEye!,  ro = params.origRightEye!;
       const la = params.imageALeftEye!, ra = params.imageARightEye!;
 
-      const sx = baseW / origW, sy = baseH / origH;
-      // 원본 눈 좌표를 baseW×baseH 공간으로 스케일
-      const lx0 = lo.x * sx, ly0 = lo.y * sy;
-      const rx0 = ro.x * sx, ry0 = ro.y * sy;
-
-      // 두 눈 벡터
-      const dx_s = rx0 - lx0, dy_s = ry0 - ly0;   // scaled orig space
-      const dx_a = ra.x - la.x, dy_a = ra.y - la.y; // imageA space
-
-      const D = dx_s * dx_s + dy_s * dy_s;
+      // 순방향: imageA_pt = [[fwdA,-fwdB],[fwdB,fwdA]]·orig_pt + [tx,ty]
+      const dx_o = ro.x - lo.x, dy_o = ro.y - lo.y;
+      const dx_a = ra.x - la.x, dy_a = ra.y - la.y;
+      const D = dx_o * dx_o + dy_o * dy_o;
       if (D < 1) throw new Error("원본 눈 포인트가 너무 가깝습니다.");
 
-      // 순방향 유사 변환 계수 (scaled orig → imageA)
-      const fwdA = (dx_s * dx_a + dy_s * dy_a) / D;
-      const fwdB = (dx_s * dy_a - dy_s * dx_a) / D;
-      const s2   = fwdA * fwdA + fwdB * fwdB; // = (scale)^2
+      const fwdA = (dx_o * dx_a + dy_o * dy_a) / D;  // s·cos θ
+      const fwdB = (dx_o * dy_a - dy_o * dx_a) / D;  // s·sin θ
+      const tx   = la.x - fwdA * lo.x + fwdB * lo.y;
+      const ty   = la.y - fwdB * lo.x - fwdA * lo.y;
 
-      // 역행렬 (imageA → scaled orig): Sharp affine 입력
-      const m00 =  fwdA / s2, m01 =  fwdB / s2;
-      const m10 = -fwdB / s2, m11 =  fwdA / s2;
+      // 역변환: orig_pt = (1/s²)·[[fwdA,fwdB],[-fwdB,fwdA]]·(imageA_pt - [tx,ty])
+      const s2   = fwdA * fwdA + fwdB * fwdB;
+      const invA = fwdA / s2;
+      const invB = fwdB / s2;
 
-      const origResized = await sharp(origBuf).resize(baseW, baseH, { fit: "fill" }).toBuffer();
-      warpedBuf = await sharp(origResized)
-        .affine(
-          [[m00, m01], [m10, m11]],
-          { background: { r: 128, g: 128, b: 128 }, odx: la.x, ody: la.y, idx: lx0, idy: ly0 },
-        )
-        .resize(baseW, baseH, { fit: "fill" })
-        .toBuffer();
+      // 원본 픽셀 (native resolution, RGB 3채널 가정)
+      const { data: origRaw } = await sharp(origBuf)
+        .removeAlpha().toColorspace("srgb").raw().toBuffer({ resolveWithObject: true });
+
+      // 출력 버퍼: baseW×baseH×3, 기본값 128 (high-pass 중립색)
+      const warpedRaw = Buffer.alloc(baseW * baseH * 3, 128);
+
+      for (let oy = 0; oy < baseH; oy++) {
+        const dy = oy - ty;
+        for (let ox = 0; ox < baseW; ox++) {
+          const dx  = ox - tx;
+          const ix_f =  invA * dx + invB * dy;   // orig x (float)
+          const iy_f = -invB * dx + invA * dy;   // orig y (float)
+
+          const ix0 = Math.floor(ix_f), iy0 = Math.floor(iy_f);
+          if (ix0 < 0 || iy0 < 0 || ix0 >= origW - 1 || iy0 >= origH - 1) continue;
+
+          const fx = ix_f - ix0, fy = iy_f - iy0;
+          const w00 = (1-fx)*(1-fy), w01 = fx*(1-fy);
+          const w10 = (1-fx)*fy,     w11 = fx*fy;
+
+          const p00 = (iy0 * origW + ix0) * 3;
+          const po  = (oy  * baseW + ox)  * 3;
+
+          warpedRaw[po]   = Math.round(w00*origRaw[p00]     + w01*origRaw[p00+3]       + w10*origRaw[p00+origW*3]   + w11*origRaw[p00+origW*3+3]);
+          warpedRaw[po+1] = Math.round(w00*origRaw[p00+1]   + w01*origRaw[p00+4]       + w10*origRaw[p00+origW*3+1] + w11*origRaw[p00+origW*3+4]);
+          warpedRaw[po+2] = Math.round(w00*origRaw[p00+2]   + w01*origRaw[p00+5]       + w10*origRaw[p00+origW*3+2] + w11*origRaw[p00+origW*3+5]);
+        }
+      }
+
+      warpedBuf = await sharp(warpedRaw, { raw: { width: baseW, height: baseH, channels: 3 } })
+        .png().toBuffer();
 
     } else {
       // ── 1b. 랜드마크 없음 → 단순 full-image 리사이즈 ─────────────────
-      // BiRefNet bbox crop 방식은 회색 캔버스 경계선이 high-pass에서
-      // ghost face로 나타나는 아티팩트를 유발하므로 사용하지 않음.
+      // 얼굴 위치가 다른 경우 정확한 정렬은 불가 — 랜드마크 사용 권장.
       warpedBuf = await sharp(origBuf).resize(baseW, baseH, { fit: "fill" }).toBuffer();
     }
 
