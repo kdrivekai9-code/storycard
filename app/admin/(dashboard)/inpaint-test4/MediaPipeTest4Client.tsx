@@ -88,29 +88,50 @@ function getTrianglesFromConnections(connections: Array<{ start: number; end: nu
   return triangles;
 }
 
-async function fileToImageData(file: File, maxDim = 1280): Promise<ImageData> {
-  const bitmap = await createImageBitmap(file);
-  // MediaPipe는 고해상도 이미지에서 얼굴 감지 실패 → 최대 1280px로 축소
-  // 랜드마크는 normalized(0~1) 좌표이므로 원본 크기에도 동일하게 적용됨
-  const scale = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height));
-  const w = Math.round(bitmap.width * scale);
-  const h = Math.round(bitmap.height * scale);
+type CropRect = { sx: number; sy: number; sw: number; sh: number };
+
+// bitmap의 crop 영역을 최대 maxDim까지 확대/축소해 ImageData로 반환
+function cropToImageData(bitmap: ImageBitmap, crop: CropRect, maxDim: number): ImageData {
+  const scale = Math.min(1, maxDim / Math.max(crop.sw, crop.sh)) || 1;
+  const w = Math.max(1, Math.round(crop.sw * scale));
+  const h = Math.max(1, Math.round(crop.sh * scale));
   const canvas = document.createElement("canvas");
   canvas.width = w;
   canvas.height = h;
-  canvas.getContext("2d")!.drawImage(bitmap, 0, 0, w, h);
-  bitmap.close();
-  console.log(`[MediaPipe] 이미지 리사이즈: ${bitmap.width}×${bitmap.height} → ${w}×${h}`);
-  return canvas.getContext("2d")!.getImageData(0, 0, w, h);
+  const ctx = canvas.getContext("2d")!;
+  ctx.drawImage(bitmap, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, w, h);
+  return ctx.getImageData(0, 0, w, h);
+}
+
+// [0, 1-frac] 구간을 count개로 균등 분할한 위치(비율) 배열
+function evenPositions(frac: number, count: number): number[] {
+  const last = Math.max(0, 1 - frac);
+  if (frac >= 1 || count <= 1) return [last / 2];
+  const step = last / (count - 1);
+  return Array.from({ length: count }, (_, i) => i * step);
+}
+
+// frac 크기(원본 대비 비율)의 정사각 타일을 count×count 격자로 겹치게 배치
+function generateGridTiles(W: number, H: number, frac: number, count = 3): CropRect[] {
+  const xs = evenPositions(frac, count);
+  const ys = evenPositions(frac, count);
+  const tiles: CropRect[] = [];
+  for (const py of ys) {
+    for (const px of xs) {
+      tiles.push({ sx: px * W, sy: py * H, sw: frac * W, sh: frac * H });
+    }
+  }
+  return tiles;
 }
 
 async function detectLandmarks(file: File): Promise<DetectionResult | null> {
   const { landmarker, FaceLandmarker } = await loadFaceLandmarker();
+  const bitmap = await createImageBitmap(file);
+  const W = bitmap.width;
+  const H = bitmap.height;
 
-  // 전신 사진처럼 얼굴 비율이 작을 때를 대비해 점진적으로 축소 시도
-  // normalized 좌표이므로 어느 크기에서 감지해도 결과는 동일하게 적용됨
-  for (const maxDim of [1280, 640, 320]) {
-    const imageData = await fileToImageData(file, maxDim);
+  const tryDetect = (crop: CropRect, maxDim: number, label: string): LandmarkPoint[] | null => {
+    const imageData = cropToImageData(bitmap, crop, maxDim);
     let result: { faceLandmarks: LandmarkPoint[][] };
     try {
       result = landmarker.detect(imageData);
@@ -121,15 +142,43 @@ async function detectLandmarks(file: File): Promise<DetectionResult | null> {
       throw new Error(`MediaPipe detect 실패 — ${name}: ${msg || "(메시지 없음)"}`);
     }
     const found = result.faceLandmarks?.length ?? 0;
-    console.log(`[MediaPipe] maxDim=${maxDim} (${imageData.width}×${imageData.height}): 감지 수 ${found}`);
-    if (found > 0) {
-      return {
-        landmarks: result.faceLandmarks[0],
-        triangles: getTrianglesFromConnections(FaceLandmarker.FACE_LANDMARKS_TESSELATION),
-      };
+    console.log(`[MediaPipe] ${label} (${imageData.width}×${imageData.height}): 감지 수 ${found}`);
+    if (found === 0) return null;
+    // crop 기준 normalized 좌표 → 원본 이미지 기준 normalized 좌표로 환산
+    return result.faceLandmarks[0].map((p) => ({
+      x: (crop.sx + p.x * crop.sw) / W,
+      y: (crop.sy + p.y * crop.sh) / H,
+      z: p.z,
+    }));
+  };
+
+  try {
+    // 1차: 전체 이미지, 점진적 축소 (클로즈업 사진 — 대부분 여기서 감지됨)
+    const full: CropRect = { sx: 0, sy: 0, sw: W, sh: H };
+    for (const maxDim of [1280, 640, 320]) {
+      const landmarks = tryDetect(full, maxDim, `전체(maxDim=${maxDim})`);
+      if (landmarks) {
+        return { landmarks, triangles: getTrianglesFromConnections(FaceLandmarker.FACE_LANDMARKS_TESSELATION) };
+      }
     }
+
+    // 2차: 전신/와이드샷처럼 얼굴이 화면에서 작게 나온 경우.
+    // 1차에서 이미 축소했는데도 실패했다면 더 축소해봐야 얼굴은 더 작아질 뿐이다.
+    // 실측 결과 MediaPipe는 얼굴이 프레임의 25~35% 이상을 차지해야 감지되므로,
+    // 반대로 격자 형태로 겹치는 영역을 크롭해 확대(얼굴 비중 UP)한 뒤 재시도한다.
+    for (const frac of [0.5, 0.32, 0.2]) {
+      for (const tile of generateGridTiles(W, H, frac)) {
+        const landmarks = tryDetect(tile, 1280, `타일(frac=${frac},${Math.round(tile.sx)},${Math.round(tile.sy)})`);
+        if (landmarks) {
+          return { landmarks, triangles: getTrianglesFromConnections(FaceLandmarker.FACE_LANDMARKS_TESSELATION) };
+        }
+      }
+    }
+
+    return null;
+  } finally {
+    bitmap.close();
   }
-  return null;
 }
 
 // ── Canvas overlay 그리기 ─────────────────────────────────────────────────────
@@ -444,7 +493,7 @@ function SlotUpload({
           borderRadius: 8,
           overflow: "hidden",
           position: "relative",
-          minHeight: 180,
+          minHeight: 240,
           background: "var(--bg)",
         }}
       >
@@ -457,7 +506,7 @@ function SlotUpload({
               style={{
                 width: "100%",
                 display: showCanvas ? "none" : "block",
-                maxHeight: 300,
+                maxHeight: 480,
                 objectFit: "contain",
               }}
             />
@@ -466,7 +515,7 @@ function SlotUpload({
               style={{
                 width: "100%",
                 display: showCanvas ? "block" : "none",
-                maxHeight: 300,
+                maxHeight: 480,
                 objectFit: "contain",
               }}
             />
