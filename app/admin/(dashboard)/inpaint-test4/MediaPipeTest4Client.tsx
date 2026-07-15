@@ -19,30 +19,37 @@ interface DetectionResult {
 }
 
 // ── MediaPipe 동적 로드 ───────────────────────────────────────────────────────
+// Promise를 싱글턴으로 캐싱 → Promise.all로 동시 호출돼도 초기화는 한 번만 실행됨
 
-let faceLandmarkerModule: unknown = null;
+type LandmarkerModule = {
+  landmarker: { detect: (img: ImageBitmap) => { faceLandmarks: LandmarkPoint[][] } };
+  FaceLandmarker: { FACE_LANDMARKS_TESSELATION: Array<{ start: number; end: number }> };
+};
+let landmarkerPromise: Promise<LandmarkerModule> | null = null;
 
-async function loadFaceLandmarker() {
-  if (faceLandmarkerModule) return faceLandmarkerModule;
-  /* eslint-disable @typescript-eslint/no-explicit-any */
-  const mod = await import("@mediapipe/tasks-vision") as any;
-  const { FaceLandmarker, FilesetResolver } = mod;
-  /* eslint-enable @typescript-eslint/no-explicit-any */
-  const filesetResolver = await FilesetResolver.forVisionTasks(
-    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm",
-  );
-  const landmarker = await FaceLandmarker.createFromOptions(filesetResolver, {
-    baseOptions: {
-      modelAssetPath:
-        "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
-      // delegate 미지정 → MediaPipe가 GPU/CPU 자동 선택
-    },
-    outputFaceBlendshapes: false,
-    runningMode: "IMAGE",
-    numFaces: 1,
-  });
-  faceLandmarkerModule = { landmarker, FaceLandmarker };
-  return faceLandmarkerModule as { landmarker: unknown; FaceLandmarker: unknown };
+function loadFaceLandmarker(): Promise<LandmarkerModule> {
+  if (!landmarkerPromise) {
+    landmarkerPromise = (async () => {
+      /* eslint-disable @typescript-eslint/no-explicit-any */
+      const mod = await import("@mediapipe/tasks-vision") as any;
+      const { FaceLandmarker, FilesetResolver } = mod;
+      /* eslint-enable @typescript-eslint/no-explicit-any */
+      const filesetResolver = await FilesetResolver.forVisionTasks(
+        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm",
+      );
+      const landmarker = await FaceLandmarker.createFromOptions(filesetResolver, {
+        baseOptions: {
+          modelAssetPath:
+            "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+        },
+        outputFaceBlendshapes: false,
+        runningMode: "IMAGE",
+        numFaces: 1,
+      });
+      return { landmarker, FaceLandmarker } as LandmarkerModule;
+    })();
+  }
+  return landmarkerPromise;
 }
 
 // MediaPipe connections → triangle 인덱스 추출
@@ -79,10 +86,7 @@ function getTrianglesFromConnections(connections: Array<{ start: number; end: nu
 }
 
 async function detectLandmarks(file: File): Promise<DetectionResult | null> {
-  const { landmarker, FaceLandmarker } = await loadFaceLandmarker() as {
-    landmarker: { detect: (img: ImageBitmap) => { faceLandmarks: LandmarkPoint[][] } };
-    FaceLandmarker: { FACE_LANDMARKS_TESSELATION: Array<{ start: number; end: number }> };
-  };
+  const { landmarker, FaceLandmarker } = await loadFaceLandmarker();
   // HTMLImageElement 대신 ImageBitmap 사용 — WebGL taint 및 타이밍 문제 방지
   const bitmap = await createImageBitmap(file);
   const result = landmarker.detect(bitmap);
