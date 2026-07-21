@@ -1,15 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import {
-  submitMultiFaceSwap,
-  submitTwoPersonFaceSwap,
-  submitSecondStageSwap,
-  uploadFaceCrop,
-  pollMultiFaceSwap,
-  type RetryCtx,
-  type Stage2Info,
-} from "./actions";
+import { submitMultiFaceSwap, pollMultiFaceSwap, type RetryCtx } from "./actions";
 
 const ESTIMATE_SEC = 40;
 
@@ -197,29 +189,32 @@ async function cropFaceFromBitmap(
   });
 }
 
-// 2인→2인 스왑에서는 Init Image 안의 "어느 얼굴을 바꿀지"를 ModelsLab에
-// reference_image로 알려줘야 한다(Specific Face Swap API). Init Image에서도
-// 얼굴 2개를 감지해 좌→우 순서로 크롭해둔다 — 좌(얼굴1=여성) 먼저, 우(얼굴2=
-// 남성) 나중 순서로 체이닝한다.
-async function detectFaceCropsIn(file: File): Promise<{ files: [File, File]; previews: [string, string] } | null> {
-  const faces = await detectTwoFaces(file);
-  if (!faces || faces.length < 2) return null;
-  const bitmap = await createImageBitmap(file);
+// Multiple Face Swap(deepfake/multiple_face_swap)은 target_image가 문자열
+// 하나만 지원한다(배열 불가 — ModelsLab 문서 기준). 얼굴 소스가 2명이면
+// 소스1·2를 좌우로 이어붙인 합성 이미지 하나를 만들어 target_image로 넘긴다 —
+// "target_image 안에 얼굴이 여러 개면 init_image의 얼굴들과 순서대로 매칭한다"는
+// 문서 설명과 일치하는 방식이다.
+async function composeSideBySide(fileA: File, fileB: File): Promise<{ file: File; preview: string }> {
+  const [bmpA, bmpB] = await Promise.all([createImageBitmap(fileA), createImageBitmap(fileB)]);
   try {
-    const [c1, c2] = await Promise.all([
-      cropFaceFromBitmap(bitmap, faces[0]),
-      cropFaceFromBitmap(bitmap, faces[1]),
-    ]);
-    return { files: [c1.file, c2.file], previews: [c1.preview, c2.preview] };
+    const H = 900;
+    const wA = Math.max(1, Math.round(bmpA.width * (H / bmpA.height)));
+    const wB = Math.max(1, Math.round(bmpB.width * (H / bmpB.height)));
+    const canvas = document.createElement("canvas");
+    canvas.width = wA + wB;
+    canvas.height = H;
+    const ctx = canvas.getContext("2d")!;
+    ctx.drawImage(bmpA, 0, 0, wA, H);
+    ctx.drawImage(bmpB, wA, 0, wB, H);
+    return new Promise(resolve => {
+      canvas.toBlob(blob => {
+        const f = new File([blob!], "combined-target.jpg", { type: "image/jpeg" });
+        resolve({ file: f, preview: URL.createObjectURL(f) });
+      }, "image/jpeg", 0.95);
+    });
   } finally {
-    bitmap.close();
+    bmpA.close(); bmpB.close();
   }
-}
-
-async function fetchAsFile(url: string, filename: string): Promise<File> {
-  const res = await fetch(url);
-  const blob = await res.blob();
-  return new File([blob], filename, { type: blob.type || "image/jpeg" });
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -251,7 +246,7 @@ function nowLabel(): string {
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
-export function FaceSwapTest2Client() {
+export function FaceSwapTest3Client() {
   const [previews,   setPreviews]   = useState<Partial<Record<SlotKey, string>>>({});
   const [enhance,    setEnhance]    = useState(false);
   const [result,     setResult]     = useState<string | null>(null);
@@ -263,9 +258,8 @@ export function FaceSwapTest2Client() {
   const [lightbox,   setLightbox]   = useState<string | null>(null);
   const [statusInfo, setStatusInfo] = useState<{ rawStatus?: string; eta?: number; retried?: boolean } | null>(null);
   const [timeline,   setTimeline]   = useState<TimelineEntry[]>([]);
-  const [stageLabel, setStageLabel] = useState<"" | "1차" | "2차">("");
-  // Init Image 안에서 자동 인식된 얼굴 2개(2인→2인 스왑의 reference_image로 쓰임) 미리보기
-  const [initFaceCrops, setInitFaceCrops] = useState<[string, string] | null>(null);
+  // 2인→2인 스왑 시 소스1·2를 좌우로 합성해 target_image로 넘기는 이미지의 미리보기
+  const [combinedPreview, setCombinedPreview] = useState<string | null>(null);
 
   function logEntry(entry: Omit<TimelineEntry, "time">) {
     setTimeline(t => [...t, { ...entry, time: nowLabel() }]);
@@ -281,8 +275,6 @@ export function FaceSwapTest2Client() {
   const pollingActiveRef = useRef(false);
   const timerRef         = useRef<ReturnType<typeof setInterval> | null>(null);
   const fetchUrlRef      = useRef("");
-  // 2인→2인 스왑(1차→2차 체이닝) 진행 중 2차 제출에 필요한 정보를 들고 있는다.
-  const stage2Ref        = useRef<Stage2Info | null>(null);
 
   useEffect(() => {
     if (phase !== "idle") {
@@ -306,36 +298,18 @@ export function FaceSwapTest2Client() {
   }
 
   function finalizeSuccess(outputUrl: string, source: string) {
-    stopPolling(); setPhase("idle"); setStageLabel("");
+    stopPolling(); setPhase("idle");
     setResult(outputUrl);
     setHistory(h => [outputUrl, ...h].slice(0, 20));
     logEntry({ source, result: "success" });
   }
 
   function finalizeError(errorMsg: string, retried: boolean | undefined, source: string) {
-    stopPolling(); setPhase("idle"); setStageLabel("");
+    stopPolling(); setPhase("idle");
     setError(errorMsg);
     setErrorRetried(!!retried);
     const { summary, raw } = parseApiError(errorMsg);
     logEntry({ source, result: "error", message: summary, raw, retried });
-  }
-
-  // 2인→2인 스왑은 1차(얼굴1=여성 교체) → 2차(얼굴2=남성 교체, init_image=1차
-  // 결과) 순으로 체이닝된다. submitTwoPersonFaceSwap(1차 제출)과
-  // submitSecondStageSwap(2차 제출) 둘 다 이 함수로 결과를 처리한다.
-  async function handleTwoPersonResult(
-    res: Awaited<ReturnType<typeof submitTwoPersonFaceSwap>>,
-    submitSource: string,
-  ) {
-    if (!res.ok) { finalizeError(res.error, res.retried, submitSource); return; }
-    if (res.status === "success") { finalizeSuccess(res.outputUrl, submitSource); return; }
-    // processing — stage2 정보는 1차 제출의 응답에만 실려온다
-    if (res.stage2) stage2Ref.current = res.stage2;
-    setPhase("processing");
-    setStageLabel(res.stage === 1 ? "1차" : "2차");
-    setStatusInfo({ rawStatus: res.rawStatus, eta: res.eta });
-    logEntry({ source: submitSource, result: "processing", rawStatus: res.rawStatus, eta: res.eta });
-    void startPolling(res.fetchUrl, res.stage, res.retryCtx);
   }
 
   // 클라이언트에서 짧은 간격으로 반복 호출하는 대신, 서버(pollMultiFaceSwap)가
@@ -344,49 +318,17 @@ export function FaceSwapTest2Client() {
   // 번 더 부르면 되고, setInterval로 매번 새 요청을 쏠 필요가 없다.
   // ModelsLab이 "Try Again"처럼 재시도 가능한 실패를 내면 서버가 자동으로 한 번
   // 재제출하는데, 그럴 때 fetchUrl이 새 작업의 것으로 바뀌므로 여기서 갱신해둔다.
-  async function startPolling(fetchUrl: string, stage: 1 | 2 | "single", retryCtx?: RetryCtx) {
+  async function startPolling(fetchUrl: string, retryCtx?: RetryCtx) {
     fetchUrlRef.current = fetchUrl;
     pollingActiveRef.current = true;
-    const stageTag = stage === 1 ? "(1차)" : stage === 2 ? "(2차)" : "";
     while (pollingActiveRef.current) {
       const res = await pollMultiFaceSwap(fetchUrlRef.current, retryCtx);
       if (!pollingActiveRef.current) return;
-      if (res.status === "success") {
-        if (stage === 1 && stage2Ref.current) {
-          logEntry({ source: `폴링${stageTag}`, result: "success" });
-          const stage2 = stage2Ref.current;
-          stage2Ref.current = null;
-          try {
-            // 2차 reference_image는 "지금부터 init_image로 쓸 이미지(=1차 결과)"
-            // 안에서 다시 찾아 크롭해야 한다. 원본 Init Image에서 미리 크롭해둔
-            // 얼굴2 기준 이미지를 그대로 쓰면, 1차 스왑으로 사진 전체가 살짝
-            // 재생성되면서 기준 이미지와 실제 init_image(1차 결과)가 어긋날 수 있다.
-            const stage1OutputFile = await fetchAsFile(res.outputUrl, "stage1-output.jpg");
-            const freshCrops = await detectFaceCropsIn(stage1OutputFile);
-            if (!freshCrops) throw new Error("1차 결과 이미지에서 얼굴 2개를 다시 인식하지 못했습니다.");
-            setInitFaceCrops(freshCrops.previews);
-            const uploadFd = new FormData();
-            uploadFd.set("file", freshCrops.files[1]);
-            const uploaded = await uploadFaceCrop(uploadFd);
-            if (!uploaded.ok) throw new Error(uploaded.error);
-            const res2 = await submitSecondStageSwap(res.outputUrl, { source2Url: stage2.source2Url, ref2Url: uploaded.url });
-            if (!pollingActiveRef.current) return;
-            await handleTwoPersonResult(res2, "제출(2차)");
-          } catch (err) {
-            finalizeError(`2차 준비 실패: ${err instanceof Error ? err.message : String(err)}`, false, "폴링(1차)→2차 준비");
-          }
-          return;
-        }
-        finalizeSuccess(res.outputUrl, `폴링${stageTag}`);
-        return;
-      }
-      if (res.status === "error") {
-        finalizeError(res.error, res.retried, `폴링${stageTag}`);
-        return;
-      }
+      if (res.status === "success") { finalizeSuccess(res.outputUrl, "폴링"); return; }
+      if (res.status === "error") { finalizeError(res.error, res.retried, "폴링"); return; }
       if (res.fetchUrl) fetchUrlRef.current = res.fetchUrl;
       setStatusInfo({ rawStatus: res.rawStatus, eta: res.eta, retried: res.retried });
-      logEntry({ source: `폴링${stageTag}${res.retried ? "(재시도됨)" : ""}`, result: "processing", rawStatus: res.rawStatus, eta: res.eta });
+      logEntry({ source: res.retried ? "폴링(재시도됨)" : "폴링", result: "processing", rawStatus: res.rawStatus, eta: res.eta });
       // 여전히 processing — 서버가 이미 자체적으로 기다렸으니 바로 다시 요청
     }
   }
@@ -424,7 +366,7 @@ export function FaceSwapTest2Client() {
     if (!formRef.current) return;
     stopPolling();
     setResult(null); setError(null); setErrorRetried(false); setPhase("uploading"); setStatusInfo(null);
-    setInitFaceCrops(null); setStageLabel(""); stage2Ref.current = null;
+    setCombinedPreview(null);
 
     const fd = new FormData(formRef.current);
     fd.set("enhance", enhance ? "1" : "0");
@@ -437,34 +379,22 @@ export function FaceSwapTest2Client() {
 
     setTimeline([]);
 
-    const initFile = fd.get("init_image") as File | null;
-    const source2File = fd.get("target_image_2") as File | null;
+    const source1File = fd.get("target_image")   as File | null;
+    const source2File  = fd.get("target_image_2") as File | null;
     const hasSecondSource = !!(source2File && source2File.size > 0);
 
-    if (hasSecondSource) {
-      // 2인→2인: Specific Face Swap(single_face_swap, reference_image 방식)을
-      // 얼굴별로(여성→남성 순) 두 번 체이닝한다. 그러려면 Init Image 자체에서도
-      // 얼굴 2개를 감지해 reference_image로 크롭해둬야 한다.
-      if (!initFile || initFile.size === 0) { setPhase("idle"); setError("Init Image를 선택해주세요."); return; }
+    if (hasSecondSource && source1File) {
+      // 2인→2인: 소스1·2 얼굴을 좌우로 이어붙인 합성 이미지 하나를 target_image로 넘긴다.
       try {
-        const crops = await detectFaceCropsIn(initFile);
-        if (!crops) {
-          setPhase("idle");
-          setError("Init Image에서 얼굴 2개를 자동 인식하지 못했습니다. 2인이 잘 보이는 정면 사진을 사용해주세요.");
-          return;
-        }
-        setInitFaceCrops(crops.previews);
-        fd.set("reference_image_1", crops.files[0]);
-        fd.set("reference_image_2", crops.files[1]);
+        const combined = await composeSideBySide(source1File, source2File);
+        setCombinedPreview(combined.preview);
+        fd.set("target_image", combined.file);
+        fd.delete("target_image_2");
       } catch (err) {
         setPhase("idle");
-        setError(`Init Image 얼굴 인식 실패: ${err instanceof Error ? err.message : String(err)}`);
+        setError(`합성 이미지 생성 실패: ${err instanceof Error ? err.message : String(err)}`);
         return;
       }
-
-      const res = await submitTwoPersonFaceSwap(fd);
-      await handleTwoPersonResult(res, "제출(1차)");
-      return;
     }
 
     const res = await submitMultiFaceSwap(fd);
@@ -473,7 +403,7 @@ export function FaceSwapTest2Client() {
     setPhase("processing");
     setStatusInfo({ rawStatus: res.rawStatus, eta: res.eta });
     logEntry({ source: "제출", result: "processing", rawStatus: res.rawStatus, eta: res.eta });
-    void startPolling(res.fetchUrl, "single", res.retryCtx);
+    void startPolling(res.fetchUrl, res.retryCtx);
   }
 
   const loading   = phase !== "idle";
@@ -629,14 +559,14 @@ export function FaceSwapTest2Client() {
         {/* ── 실행 버튼 ─────────────────────────────────────────────── */}
         <button type="submit" className="admin-btn" disabled={loading || !ready}
           style={{ minWidth: 180, fontSize: 14, padding: "10px 28px", marginBottom: 24 }}>
-          {loading ? "처리 중…" : isTwoToTwo ? "✦ 2인→2인 Face Swap 실행" : "✦ Multiple Face Swap 실행"}
+          {loading ? "처리 중…" : isTwoToTwo ? "✦ 2인→2인 Face Swap 실행 (합성)" : "✦ Multiple Face Swap 실행"}
         </button>
 
         {/* ── 진행 상태 ─────────────────────────────────────────────── */}
         {loading && (
           <div style={{ marginBottom: 24 }}>
             <div style={{ fontSize: 13, color: "var(--ink-soft)", marginBottom: 8 }}>
-              {phase === "uploading" ? "이미지 업로드 중…" : `처리 중${stageLabel ? ` (${stageLabel})` : ""}… ${formatMmSs(elapsed)}`}
+              {phase === "uploading" ? "이미지 업로드 중…" : `처리 중… ${formatMmSs(elapsed)}`}
             </div>
             <div style={{ height: 6, background: "var(--line)", borderRadius: 4, overflow: "hidden", maxWidth: 480 }}>
               <div style={{ height: "100%", width: `${phase === "uploading" ? 8 : progress}%`, background: "var(--accent)", borderRadius: 4, transition: "width 1s linear" }} />
@@ -650,14 +580,12 @@ export function FaceSwapTest2Client() {
                 {statusInfo.retried && " · 재시도 1회 발생"}
               </div>
             )}
-            {initFaceCrops && (
+            {combinedPreview && (
               <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 10 }}>
-                <span style={{ fontSize: 11, color: "var(--ink-faint)" }}>Init Image에서 인식된 얼굴 (1차/2차 순서):</span>
-                {initFaceCrops.map((url, i) => (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img key={i} src={url} alt={`Init 얼굴 ${i + 1}`} onClick={() => setLightbox(url)}
-                    style={{ width: 48, height: 60, objectFit: "cover", borderRadius: 6, border: "1px solid var(--line)", cursor: "zoom-in" }} />
-                ))}
+                <span style={{ fontSize: 11, color: "var(--ink-faint)" }}>실제 target_image로 전송된 합성 이미지:</span>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={combinedPreview} alt="합성된 target_image" onClick={() => setLightbox(combinedPreview)}
+                  style={{ height: 60, objectFit: "cover", borderRadius: 6, border: "1px solid var(--line)", cursor: "zoom-in" }} />
               </div>
             )}
           </div>

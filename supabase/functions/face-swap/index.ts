@@ -78,19 +78,29 @@ Deno.serve(async (req: Request) => {
 
     const json = await res.json();
 
-    if (json.status === "error") return J({ error: json.message ?? "API 오류" }, 502);
-
     // 즉시 완료
     if (json.status === "success") {
       return J({ status: "success", outputUrl: json.output?.[0] ?? json.proxy_links?.[0] });
     }
 
-    // 큐 대기 중 — fetch_result URL 반환
-    return J({
-      status: "processing",
-      fetchUrl: json.fetch_result,
-      eta: json.eta ?? 5,
-    });
+    // 실패로 "확인된" 값만 에러로 취급 (poll/multi-swap 핸들러와 동일한 원칙 —
+    // status==="error"만 좁게 검사하면 ModelsLab이 실제로 내려주는 "failed" 같은
+    // 다른 실패 문자열을 놓쳐서 fetch_result 없는 상태를 계속 processing으로
+    // 오인하게 된다).
+    const FAILURE_STATUSES = new Set(["error", "failed", "cancelled", "canceled"]);
+    const status = typeof json.status === "string" ? json.status : undefined;
+
+    if (status && !FAILURE_STATUSES.has(status) && json.fetch_result) {
+      console.log(`[face-swap] submit: 큐 등록됨 (status=${status}, eta=${json.eta ?? "?"})`);
+      return J({ status: "processing", rawStatus: status, fetchUrl: json.fetch_result, eta: json.eta ?? 5 });
+    }
+
+    console.error("[face-swap] submit: 실패 응답 →", JSON.stringify(json));
+    const detail = (json.message as string) ??
+      (!status ? "ModelsLab 응답에 status 필드가 없습니다."
+        : !json.fetch_result ? `ModelsLab 응답에 fetch_result가 없습니다 (status: ${status})`
+        : `ModelsLab 처리 실패 (status: ${status})`);
+    return J({ error: `${detail} — 원본 응답: ${JSON.stringify(json)}` }, 502);
   }
 
   // ── 폴링 ──────────────────────────────────────────────────────────────────
@@ -98,23 +108,48 @@ Deno.serve(async (req: Request) => {
     const { fetchUrl } = body;
     if (!fetchUrl) return J({ error: "fetchUrl이 필요합니다." }, 400);
 
-    const res = await fetch(fetchUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ key: MODELSLAB_KEY }),
-    });
-
-    if (!res.ok) return J({ status: "processing" });
-
-    const json = await res.json();
-
-    if (json.status === "error") return J({ error: json.message ?? "처리 실패" }, 502);
-
-    if (json.status === "success") {
-      return J({ status: "success", outputUrl: json.output?.[0] ?? json.proxy_links?.[0] });
+    let res: Response;
+    try {
+      res = await fetch(String(fetchUrl), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: MODELSLAB_KEY }),
+      });
+    } catch (fetchErr) {
+      console.error("[face-swap] poll: ModelsLab 조회 요청 실패 →", (fetchErr as Error).message);
+      return J({ error: `ModelsLab 조회 요청 실패: ${(fetchErr as Error).message}` }, 502);
     }
 
-    return J({ status: "processing", eta: json.eta ?? 3 });
+    if (!res.ok) {
+      const text = await res.text().catch(() => `HTTP ${res.status}`);
+      console.error(`[face-swap] poll: ModelsLab 조회 API 오류 (${res.status}) →`, text);
+      return J({ error: `ModelsLab 조회 API 오류 (${res.status}): ${text}` }, 502);
+    }
+
+    const json = await res.json().catch(() => ({})) as Record<string, unknown>;
+
+    if (json.status === "success") {
+      return J({ status: "success", outputUrl: (json.output as string[])?.[0] ?? (json.proxy_links as string[])?.[0] });
+    }
+
+    // 명시적으로 "실패"라고 확인된 값만 에러로 취급한다. ModelsLab이 대기 상태를
+    // "processing"뿐 아니라 "queued"/"pending" 등 다른 문자열로도 표현할 수 있어서,
+    // 대기 상태 목록을 화이트리스트로 좁히면 정상 진행 중인 작업을 오탐지해 실패로
+    // 잘못 노출할 위험이 있다. (반대로 이전에는 실패 상태까지 몽땅 processing으로
+    // 취급해서 실제 실패가 영원히 "처리 중"으로만 보이는 버그가 있었다 — 그래서
+    // 실패로 "확인된" 값만 명시적으로 걸러낸다)
+    const FAILURE_STATUSES = new Set(["error", "failed", "cancelled", "canceled"]);
+    const status = typeof json.status === "string" ? json.status : undefined;
+
+    if (status && !FAILURE_STATUSES.has(status)) {
+      console.log(`[face-swap] poll: 진행 중 (status=${status}, eta=${json.eta ?? "?"})`);
+      return J({ status: "processing", rawStatus: status, eta: json.eta ?? 3 });
+    }
+
+    console.error("[face-swap] poll: 실패 응답 →", JSON.stringify(json));
+    const detail = (json.message as string) ??
+      (status ? `ModelsLab 처리 실패 (status: ${status})` : "ModelsLab 응답에 status 필드가 없습니다.");
+    return J({ error: `${detail} — 원본 응답: ${JSON.stringify(json)}` }, 502);
   }
 
   // ── Multiple Face Swap (ModelsLab deepfake) ───────────────────────────────
@@ -123,31 +158,56 @@ Deno.serve(async (req: Request) => {
     const { init_image, target_image, enhance } = body;
     if (!init_image || !target_image) return J({ error: "init_image, target_image가 필요합니다." }, 400);
 
-    // target_image가 배열이면 2인→2인 스왑 (배열 그대로 전달)
-    const res = await fetch(MODELSLAB_MULTI_SWAP_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        key: MODELSLAB_KEY,
-        init_image,
-        target_image,           // string | string[]
-        enhance_face_swap: enhance ? 1 : 0,
-        output_format: "JPG",
-        watermark: false,
-        base64: false,
-      }),
-    });
+    let res: Response;
+    try {
+      res = await fetch(MODELSLAB_MULTI_SWAP_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          key: MODELSLAB_KEY,
+          init_image,
+          target_image,
+          enhance_face_swap: enhance ? 1 : 0,
+          output_format: "JPG",
+          watermark: false,
+          base64: false,
+        }),
+      });
+    } catch (fetchErr) {
+      return J({ error: `ModelsLab 연결 실패: ${(fetchErr as Error).message}` }, 502);
+    }
 
     if (!res.ok) {
-      const text = await res.text();
+      const text = await res.text().catch(() => `HTTP ${res.status}`);
       return J({ error: `ModelsLab API 오류 (${res.status}): ${text}` }, 502);
     }
 
-    const json = await res.json();
-    if (json.status === "error") return J({ error: json.message ?? "API 오류" }, 502);
-    if (json.status === "success") return J({ status: "success", outputUrl: json.output?.[0] ?? json.proxy_links?.[0] });
+    let json: Record<string, unknown>;
+    try {
+      json = await res.json();
+    } catch {
+      return J({ error: "ModelsLab 응답 파싱 실패" }, 502);
+    }
 
-    return J({ status: "processing", fetchUrl: json.fetch_result, eta: json.eta ?? 10 });
+    if (json.status === "success") return J({ status: "success", outputUrl: (json.output as string[])?.[0] ?? (json.proxy_links as string[])?.[0] });
+
+    // 실패로 "확인된" 값만 에러로 취급 (poll 핸들러와 동일한 원칙 — "queued" 등
+    // processing 외의 다른 대기 상태 문자열을 오탐지해 실패로 잘못 노출하지 않기 위함).
+    // 다만 fetch_result URL이 없으면 폴링할 방법이 없으므로 그 자체는 에러로 취급한다.
+    const FAILURE_STATUSES = new Set(["error", "failed", "cancelled", "canceled"]);
+    const status = typeof json.status === "string" ? json.status : undefined;
+
+    if (status && !FAILURE_STATUSES.has(status) && json.fetch_result) {
+      console.log(`[face-swap] multi-swap: 큐 등록됨 (status=${status}, eta=${json.eta ?? "?"})`);
+      return J({ status: "processing", rawStatus: status, fetchUrl: json.fetch_result, eta: json.eta ?? 10 });
+    }
+
+    console.error("[face-swap] multi-swap: 실패 응답 →", JSON.stringify(json));
+    const detail = (json.message as string) ??
+      (!status ? "ModelsLab 응답에 status 필드가 없습니다."
+        : !json.fetch_result ? `ModelsLab 응답에 fetch_result가 없습니다 (status: ${status})`
+        : `ModelsLab 처리 실패 (status: ${status})`);
+    return J({ error: `${detail} — 원본 응답: ${JSON.stringify(json)}` }, 502);
   }
 
   // ── 워크플로우 제출 ────────────────────────────────────────────────────────

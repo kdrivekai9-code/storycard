@@ -1,21 +1,20 @@
 import { requireAdmin } from "@/lib/admin/requireAdmin";
-import { FaceSwapTest2Client } from "./FaceSwapTest2Client";
+import { AkoolFaceSwapClient } from "./AkoolFaceSwapClient";
 
 export const dynamic = "force-dynamic";
 
-export default async function FaceSwapTest2Page() {
+export default async function AkoolFaceSwapPage() {
   await requireAdmin();
   return (
     <div style={{ width: "100%" }}>
       <div style={{ marginBottom: 24 }}>
-        <h1 className="admin-page-title">Face Swap 테스트2 — single*2 (Specific Face Swap)</h1>
+        <h1 className="admin-page-title">Akool Face Swap Plus (v4)</h1>
         <p className="admin-page-desc" style={{ marginTop: 6 }}>
-          ModelsLab Specific Face Swap(single_face_swap, reference_image 방식) API를
-          얼굴별로(여성→남성 순) 두 번 체이닝하는 테스트입니다.
+          Akool Face Swap Plus API를 사용해 소스 얼굴을 타겟 이미지에 합성합니다.
         </p>
       </div>
       <div style={{ background: "var(--bg-soft)", borderRadius: 10, padding: "28px 32px", border: "1px solid var(--line)" }}>
-        <FaceSwapTest2Client />
+        <AkoolFaceSwapClient />
       </div>
     </div>
   );

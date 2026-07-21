@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState, useCallback } from "react";
-import { runMediaPipeTransfer } from "./actions";
+import { createUploadUrls, runMediaPipeTransfer } from "./actions";
 
 // MediaPipe Face Mesh 얼굴 윤곽 인덱스 (FACEMESH_FACE_OVAL)
 const FACE_OVAL_INDICES = [
@@ -14,7 +14,7 @@ type LandmarkPoint = { x: number; y: number; z: number };
 type Triangle = [number, number, number];
 
 interface DetectionResult {
-  landmarks: LandmarkPoint[];
+  faces: LandmarkPoint[][]; // 감지된 얼굴별 랜드마크 (좌→우 정렬 — 원본/스왑 간 동일 인물 매칭용)
   triangles: Triangle[];
 }
 
@@ -44,10 +44,13 @@ function loadFaceLandmarker(): Promise<LandmarkerModule> {
         },
         outputFaceBlendshapes: false,
         runningMode: "IMAGE",
-        numFaces: 1,
-        minFaceDetectionConfidence: 0.1,
-        minFacePresenceConfidence: 0.1,
-        minTrackingConfidence: 0.1,
+        numFaces: 2, // 신랑+신부처럼 인물이 2명인 사진이 일반적이므로 둘 다 감지
+        // 신뢰도를 너무 낮게(0.1) 두면 얼굴이 아닌 것(구름·질감 등)을 얼굴로 오인식한다.
+        // "작은 얼굴" 문제는 이제 크롭+확대 재시도(generateGridTiles)로 해결하므로
+        // 신뢰도는 기본값 수준으로 되돌려 오탐지를 줄인다.
+        minFaceDetectionConfidence: 0.5,
+        minFacePresenceConfidence: 0.5,
+        minTrackingConfidence: 0.5,
       });
       return { landmarker, FaceLandmarker } as LandmarkerModule;
     })();
@@ -124,13 +127,19 @@ function generateGridTiles(W: number, H: number, frac: number, count = 3): CropR
   return tiles;
 }
 
-async function detectLandmarks(file: File): Promise<DetectionResult | null> {
+function avgX(face: LandmarkPoint[]): number {
+  let sum = 0;
+  for (const p of face) sum += p.x;
+  return sum / face.length;
+}
+
+async function detectLandmarks(file: File, expectedFaces = 2): Promise<DetectionResult | null> {
   const { landmarker, FaceLandmarker } = await loadFaceLandmarker();
   const bitmap = await createImageBitmap(file);
   const W = bitmap.width;
   const H = bitmap.height;
 
-  const tryDetect = (crop: CropRect, maxDim: number, label: string): LandmarkPoint[] | null => {
+  const tryDetect = (crop: CropRect, maxDim: number, label: string): LandmarkPoint[][] | null => {
     const imageData = cropToImageData(bitmap, crop, maxDim);
     let result: { faceLandmarks: LandmarkPoint[][] };
     try {
@@ -145,37 +154,48 @@ async function detectLandmarks(file: File): Promise<DetectionResult | null> {
     console.log(`[MediaPipe] ${label} (${imageData.width}×${imageData.height}): 감지 수 ${found}`);
     if (found === 0) return null;
     // crop 기준 normalized 좌표 → 원본 이미지 기준 normalized 좌표로 환산
-    return result.faceLandmarks[0].map((p) => ({
-      x: (crop.sx + p.x * crop.sw) / W,
-      y: (crop.sy + p.y * crop.sh) / H,
-      z: p.z,
-    }));
+    const faces = result.faceLandmarks.map((face) =>
+      face.map((p) => ({
+        x: (crop.sx + p.x * crop.sw) / W,
+        y: (crop.sy + p.y * crop.sh) / H,
+        z: p.z,
+      })),
+    );
+    // 좌→우 정렬: 원본/스왑 이미지에서 각각 감지된 얼굴을 인물별로 매칭하기 위함
+    faces.sort((a, b) => avgX(a) - avgX(b));
+    return faces;
+  };
+
+  // 지금까지 찾은 것 중 가장 얼굴을 많이 찾은 결과를 유지 (한 크롭에 인물이 모두 안 잡힐 수 있어서)
+  let best: LandmarkPoint[][] | null = null;
+  const consider = (faces: LandmarkPoint[][] | null): boolean => {
+    if (!faces) return false;
+    if (!best || faces.length > best.length) best = faces;
+    return best.length >= expectedFaces;
   };
 
   try {
     // 1차: 전체 이미지, 점진적 축소 (클로즈업 사진 — 대부분 여기서 감지됨)
     const full: CropRect = { sx: 0, sy: 0, sw: W, sh: H };
     for (const maxDim of [1280, 640, 320]) {
-      const landmarks = tryDetect(full, maxDim, `전체(maxDim=${maxDim})`);
-      if (landmarks) {
-        return { landmarks, triangles: getTrianglesFromConnections(FaceLandmarker.FACE_LANDMARKS_TESSELATION) };
-      }
+      if (consider(tryDetect(full, maxDim, `전체(maxDim=${maxDim})`))) break;
     }
 
     // 2차: 전신/와이드샷처럼 얼굴이 화면에서 작게 나온 경우.
     // 1차에서 이미 축소했는데도 실패했다면 더 축소해봐야 얼굴은 더 작아질 뿐이다.
     // 실측 결과 MediaPipe는 얼굴이 프레임의 25~35% 이상을 차지해야 감지되므로,
     // 반대로 격자 형태로 겹치는 영역을 크롭해 확대(얼굴 비중 UP)한 뒤 재시도한다.
-    for (const frac of [0.5, 0.32, 0.2]) {
+    outer: for (const frac of [0.5, 0.32, 0.2]) {
+      if (best && best.length >= expectedFaces) break;
       for (const tile of generateGridTiles(W, H, frac)) {
-        const landmarks = tryDetect(tile, 1280, `타일(frac=${frac},${Math.round(tile.sx)},${Math.round(tile.sy)})`);
-        if (landmarks) {
-          return { landmarks, triangles: getTrianglesFromConnections(FaceLandmarker.FACE_LANDMARKS_TESSELATION) };
+        if (consider(tryDetect(tile, 1280, `타일(frac=${frac},${Math.round(tile.sx)},${Math.round(tile.sy)})`))) {
+          break outer;
         }
       }
     }
 
-    return null;
+    if (!best) return null;
+    return { faces: best, triangles: getTrianglesFromConnections(FaceLandmarker.FACE_LANDMARKS_TESSELATION) };
   } finally {
     bitmap.close();
   }
@@ -183,42 +203,44 @@ async function detectLandmarks(file: File): Promise<DetectionResult | null> {
 
 // ── Canvas overlay 그리기 ─────────────────────────────────────────────────────
 
-function drawLandmarks(canvas: HTMLCanvasElement, img: HTMLImageElement, landmarks: LandmarkPoint[], color: string) {
+function drawLandmarks(canvas: HTMLCanvasElement, img: HTMLImageElement, faces: LandmarkPoint[][], color: string) {
   canvas.width = img.naturalWidth;
   canvas.height = img.naturalHeight;
   const ctx = canvas.getContext("2d")!;
   ctx.drawImage(img, 0, 0);
-  ctx.fillStyle = color;
-  for (const pt of landmarks) {
+  for (const landmarks of faces) {
+    ctx.fillStyle = color;
+    for (const pt of landmarks) {
+      ctx.beginPath();
+      ctx.arc(pt.x * img.naturalWidth, pt.y * img.naturalHeight, 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // 얼굴 윤곽 폴리곤
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
     ctx.beginPath();
-    ctx.arc(pt.x * img.naturalWidth, pt.y * img.naturalHeight, 2, 0, Math.PI * 2);
-    ctx.fill();
+    for (let i = 0; i < FACE_OVAL_INDICES.length; i++) {
+      const pt = landmarks[FACE_OVAL_INDICES[i]];
+      const x = pt.x * img.naturalWidth;
+      const y = pt.y * img.naturalHeight;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.stroke();
   }
-  // 얼굴 윤곽 폴리곤
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  for (let i = 0; i < FACE_OVAL_INDICES.length; i++) {
-    const pt = landmarks[FACE_OVAL_INDICES[i]];
-    const x = pt.x * img.naturalWidth;
-    const y = pt.y * img.naturalHeight;
-    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-  }
-  ctx.closePath();
-  ctx.stroke();
 }
 
 // ── 메인 컴포넌트 ─────────────────────────────────────────────────────────────
 
-type Phase = "idle" | "detecting" | "detected" | "processing" | "done" | "error";
+type Phase = "idle" | "detecting" | "detected" | "uploading" | "processing" | "done" | "error";
 
 export function MediaPipeTest4Client() {
   const [origFile, setOrigFile] = useState<File | null>(null);
   const [swapFile, setSwapFile] = useState<File | null>(null);
   const [origPreviewUrl, setOrigPreviewUrl] = useState("");
   const [swapPreviewUrl, setSwapPreviewUrl] = useState("");
-  const [origLandmarks, setOrigLandmarks] = useState<LandmarkPoint[] | null>(null);
-  const [swapLandmarks, setSwapLandmarks] = useState<LandmarkPoint[] | null>(null);
+  const [origFaces, setOrigFaces] = useState<LandmarkPoint[][] | null>(null);
+  const [swapFaces, setSwapFaces] = useState<LandmarkPoint[][] | null>(null);
   const [triangles, setTriangles] = useState<Triangle[] | null>(null);
   const [blend, setBlend] = useState(0.65);
   const [sigma, setSigma] = useState(1.5);
@@ -228,6 +250,10 @@ export function MediaPipeTest4Client() {
   const [warpedUrl, setWarpedUrl] = useState("");
   const [highPassUrl, setHighPassUrl] = useState("");
   const [maskUrl, setMaskUrl] = useState("");
+  // 결과는 서버 Storage에 매번 저장되지만, 이 페이지는 화면에 마지막 결과만 보여주고
+  // 새로고침/이동하면 사라진다 — 탭을 유지하는 동안은 이전 결과들도 다시 볼 수 있도록
+  // 세션 내 히스토리를 남겨둔다.
+  const [history, setHistory] = useState<string[]>([]);
 
   const origImgRef = useRef<HTMLImageElement | null>(null);
   const swapImgRef = useRef<HTMLImageElement | null>(null);
@@ -242,11 +268,11 @@ export function MediaPipeTest4Client() {
       if (slot === "orig") {
         setOrigFile(file);
         setOrigPreviewUrl(url);
-        setOrigLandmarks(null);
+        setOrigFaces(null);
       } else {
         setSwapFile(file);
         setSwapPreviewUrl(url);
-        setSwapLandmarks(null);
+        setSwapFaces(null);
         setTriangles(null);
       }
       setPhase("idle");
@@ -271,8 +297,14 @@ export function MediaPipeTest4Client() {
       if (!origResult) throw new Error("원본 이미지에서 얼굴을 찾을 수 없습니다.");
       if (!swapResult) throw new Error("스왑 이미지에서 얼굴을 찾을 수 없습니다.");
 
-      setOrigLandmarks(origResult.landmarks);
-      setSwapLandmarks(swapResult.landmarks);
+      // 좌→우 정렬된 얼굴들을 인덱스로 매칭 (신랑+신부처럼 인물이 여럿인 경우 대응)
+      const pairCount = Math.min(origResult.faces.length, swapResult.faces.length);
+      if (pairCount === 0) throw new Error("원본/스왑 이미지에서 매칭 가능한 얼굴을 찾을 수 없습니다.");
+      const origPaired = origResult.faces.slice(0, pairCount);
+      const swapPaired = swapResult.faces.slice(0, pairCount);
+
+      setOrigFaces(origPaired);
+      setSwapFaces(swapPaired);
       setTriangles(swapResult.triangles);
 
       // 캔버스 오버레이: HTMLImageElement로 그리기
@@ -286,8 +318,8 @@ export function MediaPipeTest4Client() {
       const [origImg, swapImg] = await Promise.all([toImg(origFile), toImg(swapFile)]);
       origImgRef.current = origImg;
       swapImgRef.current = swapImg;
-      if (origCanvasRef.current) drawLandmarks(origCanvasRef.current, origImg, origResult.landmarks, "#00ff88");
-      if (swapCanvasRef.current) drawLandmarks(swapCanvasRef.current, swapImg, swapResult.landmarks, "#ff6644");
+      if (origCanvasRef.current) drawLandmarks(origCanvasRef.current, origImg, origPaired, "#00ff88");
+      if (swapCanvasRef.current) drawLandmarks(swapCanvasRef.current, swapImg, swapPaired, "#ff6644");
 
       setPhase("detected");
     } catch (e) {
@@ -297,35 +329,54 @@ export function MediaPipeTest4Client() {
   }, [origFile, swapFile]);
 
   const handleTransfer = useCallback(async () => {
-    if (!origFile || !swapFile || !origLandmarks || !swapLandmarks || !triangles) return;
-    setPhase("processing");
+    if (!origFile || !swapFile || !origFaces || !swapFaces || !triangles) return;
+    setPhase("uploading");
     setResultUrl("");
     try {
-      const fd = new FormData();
-      fd.append("orig", origFile);
-      fd.append("swap", swapFile);
-      fd.append("landmarksOrig", JSON.stringify(origLandmarks));
-      fd.append("landmarksSwap", JSON.stringify(swapLandmarks));
-      fd.append("triangles", JSON.stringify(triangles));
-      fd.append("faceContour", JSON.stringify(FACE_OVAL_INDICES));
-      fd.append("blend", String(blend));
-      fd.append("sigma", String(sigma));
-      const res = await runMediaPipeTransfer(fd);
+      // 서버가 서명한 URL을 받아 브라우저가 Supabase에 직접 PUT한다.
+      // → 서버 액션에 바이너리를 전송하지 않으므로 프록시 버퍼 한도 문제가 없고,
+      //   서비스 롤 키로 서명하므로 RLS 정책도 우회한다.
+      const urlRes = await createUploadUrls();
+      if (!urlRes.ok) throw new Error(urlRes.error);
+
+      const [origResp, swapResp] = await Promise.all([
+        fetch(urlRes.orig.signedUrl, { method: "PUT", headers: { "Content-Type": origFile.type || "image/jpeg" }, body: origFile }),
+        fetch(urlRes.swap.signedUrl, { method: "PUT", headers: { "Content-Type": swapFile.type || "image/jpeg" }, body: swapFile }),
+      ]);
+      if (!origResp.ok) throw new Error(`원본 이미지 업로드 실패: ${origResp.status}`);
+      if (!swapResp.ok) throw new Error(`스왑 이미지 업로드 실패: ${swapResp.status}`);
+
+      const origUrl = urlRes.orig.publicUrl;
+      const swapUrl = urlRes.swap.publicUrl;
+
+      setPhase("processing");
+      const res = await runMediaPipeTransfer({
+        origUrl,
+        swapUrl,
+        landmarksOrigList: origFaces,
+        landmarksSwapList: swapFaces,
+        triangles,
+        faceContour: FACE_OVAL_INDICES,
+        blend,
+        sigma,
+      });
       if (!res.ok) throw new Error(res.error);
       setResultUrl(res.resultUrl);
       setWarpedUrl(res.warpedUrl);
       setHighPassUrl(res.highPassUrl);
       setMaskUrl(res.maskUrl);
+      setHistory(h => [res.resultUrl, ...h].slice(0, 20));
       setPhase("done");
     } catch (e) {
       setErrorMsg(e instanceof Error ? e.message : String(e));
       setPhase("error");
     }
-  }, [origFile, swapFile, origLandmarks, swapLandmarks, triangles, blend, sigma]);
+  }, [origFile, swapFile, origFaces, swapFaces, triangles, blend, sigma]);
 
   const isDetecting = phase === "detecting";
+  const isUploading = phase === "uploading";
   const isProcessing = phase === "processing";
-  const busy = isDetecting || isProcessing;
+  const busy = isDetecting || isUploading || isProcessing;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 28 }}>
@@ -335,7 +386,7 @@ export function MediaPipeTest4Client() {
           label="원본 이미지 (피부 질감 소스)"
           file={origFile}
           previewUrl={origPreviewUrl}
-          hasLandmarks={origLandmarks !== null}
+          hasLandmarks={origFaces !== null}
           canvasRef={origCanvasRef}
           onChange={(e) => handleFileChange(e, "orig")}
           accentColor="#00c875"
@@ -344,7 +395,7 @@ export function MediaPipeTest4Client() {
           label="스왑 완료 이미지 (질감 전사 대상)"
           file={swapFile}
           previewUrl={swapPreviewUrl}
-          hasLandmarks={swapLandmarks !== null}
+          hasLandmarks={swapFaces !== null}
           canvasRef={swapCanvasRef}
           onChange={(e) => handleFileChange(e, "swap")}
           accentColor="#ff6644"
@@ -390,14 +441,14 @@ export function MediaPipeTest4Client() {
         >
           {isDetecting ? "얼굴 감지 중…" : "① 얼굴 랜드마크 자동 감지"}
         </button>
-        {(phase === "detected" || phase === "done") && (
+        {(phase === "detected" || phase === "uploading" || phase === "processing" || phase === "done") && (
           <button
             className="admin-btn"
             onClick={handleTransfer}
-            disabled={isProcessing}
+            disabled={isUploading || isProcessing}
             style={{ background: "var(--accent)" }}
           >
-            {isProcessing ? "질감 전사 중…" : "② 질감 전사 실행"}
+            {isUploading ? "업로드 중…" : isProcessing ? "질감 전사 중…" : "② 질감 전사 실행"}
           </button>
         )}
       </div>
@@ -405,7 +456,7 @@ export function MediaPipeTest4Client() {
       {/* 랜드마크 감지 상태 */}
       {phase === "detected" && (
         <div style={{ padding: "10px 14px", background: "#0a3d0a", borderRadius: 8, color: "#4eff8f", fontSize: 13 }}>
-          얼굴 랜드마크 감지 완료: 원본 {origLandmarks?.length}개 / 스왑 {swapLandmarks?.length}개 포인트
+          얼굴 랜드마크 감지 완료: {origFaces?.length}명 매칭 · 얼굴당 {origFaces?.[0]?.length}개 포인트
           · 삼각형 {triangles?.length}개
         </div>
       )}
@@ -431,7 +482,7 @@ export function MediaPipeTest4Client() {
             </a>
           </div>
 
-          <details style={{ fontSize: 13 }}>
+          <details open style={{ fontSize: 13 }}>
             <summary style={{ cursor: "pointer", color: "var(--ink-soft)", marginBottom: 8 }}>
               디버그 이미지 (워프 결과 / High-Pass / 마스크)
             </summary>
@@ -454,6 +505,32 @@ export function MediaPipeTest4Client() {
               ))}
             </div>
           </details>
+        </div>
+      )}
+
+      {/* 이번 세션 결과 히스토리 — 페이지를 새로고침해도 탭을 유지하는 동안은
+          이전 결과 URL들을 다시 볼 수 있게 남겨둔다 (Storage에는 매번 저장되지만
+          이 페이지 자체가 지금까지 그걸 다시 보여줄 방법이 없었다). */}
+      {history.length > 0 && (
+        <div style={{ borderTop: "1px solid var(--line)", paddingTop: 20, marginTop: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "var(--ink)" }}>이번 세션 결과 ({history.length})</div>
+            <button type="button" className="admin-btn admin-btn--ghost" style={{ fontSize: 11 }} onClick={() => setHistory([])}>전체 삭제</button>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 12 }}>
+            {history.map((url, i) => (
+              <div key={i} style={{ border: "1px solid var(--line)", borderRadius: 8, overflow: "hidden", background: "var(--bg)" }}>
+                <a href={url} target="_blank" rel="noreferrer">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={url} alt={`결과 ${i + 1}`} style={{ width: "100%", aspectRatio: "3/4", objectFit: "cover", display: "block" }} />
+                </a>
+                <div style={{ padding: "6px 8px", display: "flex", gap: 6 }}>
+                  <a href={url} target="_blank" rel="noreferrer" className="admin-btn admin-btn--ghost" style={{ fontSize: 10, padding: "3px 8px" }}>열기</a>
+                  <button type="button" className="admin-btn admin-btn--ghost" style={{ fontSize: 10, padding: "3px 8px" }} onClick={() => navigator.clipboard.writeText(url)}>복사</button>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>

@@ -5,6 +5,7 @@ import {
   Playfair_Display, Lora,
 } from "next/font/google";
 import "./globals.css";
+import DevErrorReporter from "@/components/DevErrorReporter";
 
 // 라틴 필기체 / 세리프 폰트 (next/font — Latin subset)
 const cormorant    = Cormorant_Garamond({ variable: "--font-cormorant", subsets: ["latin"], weight: ["300","400","600"], style: ["normal","italic"] });
@@ -48,6 +49,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         />
       </head>
       <body className="min-h-full flex flex-col" style={{ "--font-pretendard": "'Pretendard'" } as React.CSSProperties}>
+        {process.env.NODE_ENV !== "production" && <DevErrorReporter />}
         {children}
       </body>
     </html>
