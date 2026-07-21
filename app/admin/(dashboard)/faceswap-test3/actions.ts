@@ -151,7 +151,7 @@ export async function submitMultiFaceSwap(formData: FormData): Promise<
 // LONG_POLL_BUDGET_MS 동안 반복 확인하다가 완료되면 그 즉시 결과를 반환한다.
 // 클라이언트는 이 호출이 끝날 때만(=완료되었거나 예산 소진) 다시 부르면 되므로
 // 요청 수가 크게 줄고, 응답이 나오는 즉시 알 수 있다(짧은 간격 setInterval 불필요).
-const LONG_POLL_BUDGET_MS = 90_000;
+const LONG_POLL_BUDGET_MS = 50_000; // Vercel Pro 타임아웃 60s 기준, 여유 10s 확보
 const LONG_POLL_INTERVAL_MS = 4_000;
 const MAX_AUTO_RETRIES = 1;
 

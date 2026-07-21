@@ -90,7 +90,7 @@ export async function submitAkoolFaceSwap(formData: FormData): Promise<
 // ── Long-poll ────────────────────────────────────────────────────────────────
 // 서버가 최대 BUDGET_MS 동안 내부적으로 반복 확인하다 완료되면 즉시 반환한다.
 
-const BUDGET_MS   = 90_000;
+const BUDGET_MS   = 50_000; // Vercel Pro 타임아웃 60s 기준, 여유 10s 확보
 const INTERVAL_MS = 4_000;
 
 export async function pollAkoolFaceSwap(jobId: string): Promise<
